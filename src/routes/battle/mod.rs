@@ -35,7 +35,7 @@ use std::fmt::Debug;
 use crate::{
     app::{AppForm, AppGarde, AppJson, AppState, Model, Payload},
     auth::api_key::ServerAuthentication,
-    battle::{BattleSchema, calculate_winnings, update_participant_ratings},
+    battle::{BattleRow, calculate_winnings, update_participant_ratings},
     error::{Error, ErrorKind},
     player::mmr::{self, Rating, RawRating},
     room::BattleData,
@@ -70,10 +70,10 @@ where
 {
     let mut conn = state.db.acquire().await?;
 
-    let mut battles = sqlx::query_as::<_, BattleSchema>(
+    let mut battles = sqlx::query_as::<_, BattleRow>(
         r#"
         SELECT
-            uuid, level_name, status, inserted_at, closed_at
+            uuid, level_name, status, margin_score, inserted_at, closed_at
         FROM
             battle
         WHERE
@@ -113,9 +113,9 @@ where
 {
     let mut conn = state.db.acquire().await?;
 
-    let battle = sqlx::query_as::<_, BattleSchema>(
+    let battle = sqlx::query_as::<_, BattleRow>(
         r#"
-        SELECT uuid, level_name, status, inserted_at, closed_at
+        SELECT uuid, level_name, status, margin_score, inserted_at, closed_at
         FROM battle
         WHERE uuid = $1
         "#,
@@ -261,10 +261,11 @@ where
     tx.commit().await?;
 
     // Create battle model
-    let schema = BattleSchema {
+    let schema = BattleRow {
         uuid: uuid.hyphenated().to_string(),
         level_name: request.level_name,
         status: BattleStatus::Ongoing,
+        margin_score: 0,
         inserted_at: now,
         closed_at: closed_at,
     };
@@ -304,7 +305,7 @@ where
         #[sqlx(flatten)]
         #[deref]
         #[deref_mut]
-        schema: BattleSchema,
+        schema: BattleRow,
     }
 
     let now = Utc::now();
@@ -314,7 +315,7 @@ where
     let battle_query = sqlx::query_as::<_, BattleQuery>(
         r#"
         SELECT
-            id, uuid, level_name, status, inserted_at, closed_at
+            id, uuid, level_name, status, margin_score, inserted_at, closed_at
         FROM
             battle
         WHERE
@@ -374,6 +375,11 @@ where
         battle_query.schema.status = new_status;
     }
 
+    // Update margin score if it is changed
+    if let Some(margin_score) = request.margin_score {
+        battle_query.schema.margin_score = margin_score;
+    }
+
     // Update match details
     sqlx::query(
         r#"
@@ -382,7 +388,8 @@ where
         SET
             status = IFNULL($2, status),
             closed_at = $3,
-            concluded_at = IFNULL($4, concluded_at)
+            concluded_at = IFNULL($4, concluded_at),
+            margin_score = IFNULL($5, margin_score)
         WHERE
             id = $1
         "#,
@@ -391,6 +398,7 @@ where
     .bind(request.status.map(|s| u8::from(s)))
     .bind(battle_query.closed_at)
     .bind(set_concluded)
+    .bind(request.margin_score)
     .execute(&mut *tx)
     .await?;
 

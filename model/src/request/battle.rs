@@ -55,8 +55,7 @@ pub struct UpdateBattleRequest {
     /// it. All players without finish times have their NO CONTEST values set
     /// to `true` if it hasn't been done already.
     ///
-    /// If the match was not cancelled, the match is then evaluated, and pots
-    /// are divvied up.
+    /// If the match was not cancelled, the match is then evaluated.
     ///
     /// If the match's current status is [`BattleStatus::Ongoing`], and this
     /// request sets it to `BattleStatus::Ongoing`, nothing happens.
@@ -64,6 +63,9 @@ pub struct UpdateBattleRequest {
     /// **This action is irreversible.** Be careful!
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<BattleStatus>,
+    /// Updates the margin score of the battle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margin_score: Option<i32>,
 }
 
 /// Request to update a wager.

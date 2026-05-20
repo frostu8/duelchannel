@@ -22,6 +22,11 @@ pub struct Battle {
     pub participants: Vec<Participant>,
     /// The status of the match.
     pub status: BattleStatus,
+    /// The margin score of the match.
+    ///
+    /// This is the number of margin boosts the match had. This is typically
+    /// zero, and goes up steadily after 3 minutes of playtime.
+    pub margin_score: i32,
     /// Whether the match is accepting bets or not.
     pub accepting_bets: bool,
     /// When the match started.

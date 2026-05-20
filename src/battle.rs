@@ -26,23 +26,24 @@ use crate::{
 ///
 /// Used primarily to construct [`Battle`]s.
 #[derive(Clone, Debug, FromRow)]
-pub struct BattleSchema {
+pub struct BattleRow {
     pub uuid: String,
     pub level_name: String,
     #[sqlx(try_from = "u8")]
     pub status: BattleStatus,
+    pub margin_score: i32,
     pub inserted_at: DateTime<Utc>,
     pub closed_at: DateTime<Utc>,
 }
 
-impl From<BattleSchema> for Battle {
-    fn from(value: BattleSchema) -> Self {
+impl From<BattleRow> for Battle {
+    fn from(value: BattleRow) -> Self {
         (&value).into()
     }
 }
 
-impl From<&BattleSchema> for Battle {
-    fn from(value: &BattleSchema) -> Self {
+impl From<&BattleRow> for Battle {
+    fn from(value: &BattleRow) -> Self {
         let now = Utc::now();
         let accepting_bets = now < value.closed_at;
 
@@ -51,6 +52,7 @@ impl From<&BattleSchema> for Battle {
             level_name: value.level_name.clone(),
             participants: vec![],
             status: value.status,
+            margin_score: value.margin_score,
             started_at: value.inserted_at,
             accepting_bets,
             closes_in: if accepting_bets {

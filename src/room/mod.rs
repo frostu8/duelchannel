@@ -28,7 +28,7 @@ use tokio::sync::{
 
 use tracing::instrument;
 
-use crate::{battle::BattleSchema, session::SessionUser};
+use crate::{battle::BattleRow, session::SessionUser};
 
 /// An open room.
 ///
@@ -50,7 +50,7 @@ struct RoomState {
 #[derive(Clone, Debug, Deref)]
 pub struct BattleData {
     #[deref]
-    pub schema: BattleSchema,
+    pub schema: BattleRow,
     pub participants: Vec<Participant>,
 }
 
