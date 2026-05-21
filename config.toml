@@ -5,8 +5,8 @@ secure_sessions = false
 bot.enabled = true
 
 [cdn]
-base_url = "https://duelchannel-replays-bucket.s3.us-east-2.amazonaws.com"
 service = "s3"
+base_url = "https://duelchannel-replays-bucket.s3.us-east-2.amazonaws.com"
 bucket = "duelchannel-replays-bucket"
 region = "us-east-2"
 

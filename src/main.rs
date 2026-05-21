@@ -90,6 +90,7 @@ async fn main() -> eyre::Result<()> {
         }
         RatingModelConfig::OpenSkill(mmr_config) => {
             let model = OpenSkill::new(mmr_config.clone()).await?;
+            tracing::info!("using openskill model");
             with_rating_model(cli, config, model).await
         }
     }
