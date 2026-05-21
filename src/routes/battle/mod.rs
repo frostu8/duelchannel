@@ -77,7 +77,7 @@ where
     let rows = sqlx::query_as::<_, BattleRow>(
         r#"
         SELECT
-            id, uuid, level_name, status, margin_score, replay_url,
+            id, uuid, level_name, status, margin_score, replay_hash,
             replay_filename, inserted_at, closed_at
         FROM
             battle
