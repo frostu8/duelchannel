@@ -15,6 +15,7 @@ use derive_more::{AsRef, Deref};
 use garde::Validate;
 use http::{header, request::Parts};
 
+use opendal::Operator;
 use serde::de::DeserializeOwned;
 
 use sqlx::SqlitePool;
@@ -30,6 +31,8 @@ use crate::error::{Error, ErrorKind};
 pub struct AppState {
     /// The database connection pool.
     pub db: SqlitePool,
+    /// The object storage.
+    pub object_storage: Operator,
     /// The WebSocket room.
     pub room: room::Room,
     /// Server config.

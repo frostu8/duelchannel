@@ -85,6 +85,7 @@ pub type Glicko2RatingRecord = RatingRecord<Glicko2Data>;
 
 /// Configuration for MMR.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct Glicko2Config {
     /// The rating period.
     ///

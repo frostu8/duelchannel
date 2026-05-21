@@ -1,6 +1,6 @@
 //! Application configuration.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::TimeDelta;
 
@@ -26,6 +26,8 @@ pub struct Config {
     pub server: ServerConfig,
     /// Mmr config.
     pub mmr: RatingModelConfig,
+    /// Object storage configuration.
+    pub cdn: StorageConfig,
     /// HTTP server configuration.
     pub http: HttpConfig,
     /// Discord configuration.
@@ -63,6 +65,66 @@ impl Default for ServerConfig {
             bot: WagerBotConfig::default(),
         }
     }
+}
+
+/// Configuration for object storage.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StorageConfig {
+    /// The base url of the CDN.
+    pub base_url: String,
+    #[serde(flatten)]
+    pub service: StorageService,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        StorageConfig {
+            base_url: "http://localhost:4000".into(),
+            service: StorageService::default(),
+        }
+    }
+}
+
+/// Configuration for object storage.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "service", rename_all = "snake_case")]
+pub enum StorageService {
+    Filesystem(FilesystemConfig),
+    S3(S3Config),
+}
+
+impl Default for StorageService {
+    fn default() -> Self {
+        StorageService::Filesystem(FilesystemConfig::default())
+    }
+}
+
+/// Filesystem object storage.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct FilesystemConfig {
+    pub root: PathBuf,
+}
+
+impl Default for FilesystemConfig {
+    fn default() -> Self {
+        FilesystemConfig {
+            root: PathBuf::from("./replays"),
+        }
+    }
+}
+
+/// Amazon S3 object storage.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct S3Config {
+    /// The name of the bucket.
+    pub bucket: String,
+    /// The region of the S3.
+    pub region: String,
+    /// The access key ID.
+    pub access_key_id: String,
+    /// The secret access key.
+    pub access_key_secret: String,
 }
 
 /// Wager bot configuration.
@@ -107,7 +169,7 @@ pub enum RatingModelConfig {
 
 impl Default for RatingModelConfig {
     fn default() -> Self {
-        RatingModelConfig::Glicko2(Glicko2Config::default())
+        RatingModelConfig::Unrated
     }
 }
 
@@ -142,6 +204,8 @@ pub fn read_config(config_file: impl AsRef<Path>) -> Result<Config, Error> {
             "DATABASE_URL" => Some(Uncased::from("server.database_url")),
             "DISCORD_CLIENT_ID" => Some(Uncased::from("discord.client_id")),
             "DISCORD_CLIENT_SECRET" => Some(Uncased::from("discord.client_secret")),
+            "S3_ACCESS_KEY_ID" => Some(Uncased::from("cdn.access_key_id")),
+            "S3_ACCESS_KEY_SECRET" => Some(Uncased::from("cdn.access_key_secret")),
             "ENCRYPTION_KEY" => Some(Uncased::from("server.encryption_key")),
             "PORT" => Some(Uncased::from("http.port")),
             _ => None,

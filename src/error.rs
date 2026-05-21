@@ -121,6 +121,18 @@ impl Error {
                     message: error.to_string(),
                 },
             ),
+            ErrorKind::Multipart(error) => (
+                StatusCode::BAD_REQUEST,
+                ApiError {
+                    message: error.to_string(),
+                },
+            ),
+            ErrorKind::MultipartParse(error) => (
+                StatusCode::BAD_REQUEST,
+                ApiError {
+                    message: error.to_string(),
+                },
+            ),
             ErrorKind::SerdeJson(error) => (
                 StatusCode::BAD_REQUEST,
                 ApiError {
@@ -272,6 +284,12 @@ pub enum ErrorKind {
     /// Input validation failed.
     #[display("{_0}")]
     Garde(Report),
+    /// Bad multipart data.
+    #[display("{_0}")]
+    Multipart(axum::extract::multipart::MultipartRejection),
+    /// Bad multipart data.
+    #[display("{_0}")]
+    MultipartParse(axum::extract::multipart::MultipartError),
     /// A resource was not found.
     #[display("Resource not found")]
     NotFound,
@@ -330,6 +348,9 @@ pub enum ErrorKind {
     /// A websocket error occured.
     #[from(ignore)]
     WebSocket(axum::Error),
+    /// Replay file is too large.
+    #[display("replay too large")]
+    ReplayTooLarge,
     /// An unhandled database error occured.
     Database(sqlx::Error),
     /// The application failed to generate a unique id.

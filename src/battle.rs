@@ -8,8 +8,8 @@ use std::{
 use chrono::{DateTime, Utc};
 
 use ring_channel_model::{
-    Battle,
-    battle::{BattleStatus, PlayerTeam},
+    Battle, Player,
+    battle::{BattleStatus, Participant, PlayerTeam},
     message::server::MobiumsChange,
     user::UserFlags,
 };
@@ -17,8 +17,9 @@ use ring_channel_model::{
 use sqlx::{FromRow, SqliteConnection};
 
 use crate::{
+    config::Config,
     error::Error,
-    player::mmr::{Model, RatingRecord, RawRatingRecord, update_rating},
+    player::mmr::{Model, Rating, RatingRecord, RawRating, RawRatingRecord, update_rating},
     room::Room,
 };
 
@@ -27,11 +28,14 @@ use crate::{
 /// Used primarily to construct [`Battle`]s.
 #[derive(Clone, Debug, FromRow)]
 pub struct BattleRow {
+    pub id: i32,
     pub uuid: String,
     pub level_name: String,
     #[sqlx(try_from = "u8")]
     pub status: BattleStatus,
     pub margin_score: i32,
+    pub replay_hash: Option<String>,
+    pub replay_filename: Option<String>,
     pub inserted_at: DateTime<Utc>,
     pub closed_at: DateTime<Utc>,
 }
@@ -53,6 +57,7 @@ impl From<&BattleRow> for Battle {
             participants: vec![],
             status: value.status,
             margin_score: value.margin_score,
+            replay_url: None,
             started_at: value.inserted_at,
             accepting_bets,
             closes_in: if accepting_bets {
@@ -274,4 +279,105 @@ async fn get_total_pot(
     .await
     .map(|(mobiums,)| mobiums)
     .map_err(Error::from)
+}
+
+/// Gets the replay url of a battle.
+pub fn get_replay_url(battle: &BattleRow, config: &Config) -> Option<String> {
+    battle
+        .replay_hash
+        .as_ref()
+        .zip(battle.replay_filename.as_ref())
+        .map(|(hash, filename)| format!("{}/{}/{}", config.cdn.base_url, hash, filename))
+}
+
+/// Preloads the `participants` field of a [`Battle`].
+///
+/// If this function fails, `battle` will not be modified.
+pub async fn preload_participants<T>(
+    battle: &mut Battle,
+    model: &crate::app::Model<T>,
+    conn: &mut SqliteConnection,
+) -> Result<(), Error>
+where
+    T: Model + 'static,
+{
+    #[derive(FromRow)]
+    struct ParticipantsQuery {
+        player_id: i32,
+        short_id: String,
+        display_name: String,
+        #[sqlx(try_from = "u8")]
+        team: PlayerTeam,
+        finish_time: Option<i32>,
+        no_contest: bool,
+        skin: Option<String>,
+        kart_speed: Option<i32>,
+        kart_weight: Option<i32>,
+        rating: Option<f32>,
+        deviation: Option<f32>,
+        #[sqlx(rename = "rating_extra")]
+        extra: Option<String>,
+    }
+
+    let participants = sqlx::query_as::<_, ParticipantsQuery>(
+        r#"
+        SELECT
+            pt.*,
+            p.id AS player_id,
+            p.short_id,
+            p.display_name,
+            p.rating,
+            p.deviation,
+            p.rating_extra
+        FROM
+            participant pt, battle b, player p
+        WHERE
+            pt.match_id = b.id
+            AND pt.player_id = p.id
+            AND b.uuid = $1
+        "#,
+    )
+    .bind(&battle.id)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    battle.participants = participants
+        .into_iter()
+        .map(|mut p| {
+            if !model.ratings_enabled() {
+                Ok((p, None))
+            } else if let Some((rating, deviation)) = p.rating.zip(p.deviation) {
+                let rating = RawRating {
+                    player_id: p.player_id,
+                    rating,
+                    deviation,
+                    extra: p.extra.take(),
+                };
+
+                Rating::<T::Data>::try_from(rating)
+                    .map_err(Error::new)
+                    .map(|rating| (p, Some(rating)))
+            } else {
+                Ok((p, None))
+            }
+        })
+        .map(|res| {
+            res.map(|(p, rating)| Participant {
+                player: Player {
+                    id: p.short_id,
+                    mmr: rating.map(|rating| rating.ordinal() as i32),
+                    display_name: p.display_name,
+                    public_key: None,
+                },
+                team: p.team,
+                finish_time: p.finish_time,
+                no_contest: p.no_contest,
+                skin: p.skin,
+                kart_speed: p.kart_speed,
+                kart_weight: p.kart_weight,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
 }

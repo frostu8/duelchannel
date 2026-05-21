@@ -1,7 +1,10 @@
 //! Match management routes.
 
 pub mod player;
+pub mod replay;
 pub mod wager;
+
+pub use replay::upload;
 
 use axum::{
     Extension,
@@ -10,13 +13,11 @@ use axum::{
 
 use chrono::{DateTime, TimeDelta, Utc};
 
-use derive_more::{Deref, DerefMut};
-
 use garde::Validate;
 
 use ring_channel_model::{
     Player,
-    battle::{Battle, BattleStatus, Participant, PlayerTeam},
+    battle::{Battle, BattleStatus, Participant},
     request::battle::{CreateBattleRequest, UpdateBattleRequest},
 };
 
@@ -35,7 +36,10 @@ use std::fmt::Debug;
 use crate::{
     app::{AppForm, AppGarde, AppJson, AppState, Model, Payload},
     auth::api_key::ServerAuthentication,
-    battle::{BattleRow, calculate_winnings, update_participant_ratings},
+    battle::{
+        BattleRow, calculate_winnings, get_replay_url, preload_participants,
+        update_participant_ratings,
+    },
     error::{Error, ErrorKind},
     player::mmr::{self, Rating, RawRating},
     room::BattleData,
@@ -70,10 +74,11 @@ where
 {
     let mut conn = state.db.acquire().await?;
 
-    let mut battles = sqlx::query_as::<_, BattleRow>(
+    let rows = sqlx::query_as::<_, BattleRow>(
         r#"
         SELECT
-            uuid, level_name, status, margin_score, inserted_at, closed_at
+            id, uuid, level_name, status, margin_score, replay_url,
+            replay_filename, inserted_at, closed_at
         FROM
             battle
         WHERE
@@ -90,12 +95,15 @@ where
     .fetch_all(&mut *conn)
     .await?
     .into_iter()
-    .map(|b| Battle::from(b))
     .collect::<Vec<_>>();
 
     // Preload all battles
-    for battle in battles.iter_mut() {
-        preload_participants(&model, battle, &mut *conn).await?;
+    let mut battles = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut battle = Battle::from(&row);
+        battle.replay_url = get_replay_url(&row, &state.config);
+        preload_participants(&mut battle, &model, &mut *conn).await?;
+        battles.push(battle);
     }
 
     Ok(AppJson(battles))
@@ -113,9 +121,11 @@ where
 {
     let mut conn = state.db.acquire().await?;
 
-    let battle = sqlx::query_as::<_, BattleRow>(
+    let row = sqlx::query_as::<_, BattleRow>(
         r#"
-        SELECT uuid, level_name, status, margin_score, inserted_at, closed_at
+        SELECT
+            id, uuid, level_name, status, margin_score, replay_hash,
+            replay_filename, inserted_at, closed_at
         FROM battle
         WHERE uuid = $1
         "#,
@@ -124,14 +134,15 @@ where
     .fetch_optional(&mut *conn)
     .await?;
 
-    let Some(battle) = battle else {
+    let Some(row) = row else {
         return Err(Error::not_found(format!("Match {} not found", uuid)));
     };
 
     // Create battle struct
-    let mut battle = Battle::from(battle);
+    let mut battle = Battle::from(&row);
 
-    preload_participants(&model, &mut battle, &mut *conn).await?;
+    battle.replay_url = get_replay_url(&row, &state.config);
+    preload_participants(&mut battle, &model, &mut *conn).await?;
 
     Ok(AppJson(battle))
 }
@@ -262,13 +273,17 @@ where
 
     // Create battle model
     let schema = BattleRow {
+        id: match_id,
         uuid: uuid.hyphenated().to_string(),
         level_name: request.level_name,
         status: BattleStatus::Ongoing,
+        replay_hash: None,
+        replay_filename: None,
         margin_score: 0,
         inserted_at: now,
         closed_at: closed_at,
     };
+
     let mut battle = Battle::from(&schema);
     battle.participants = participants.clone();
     battle.accepting_bets = true;
@@ -299,23 +314,15 @@ where
     T: Debug + mmr::Model + 'static,
     T::Data: Debug,
 {
-    #[derive(FromRow, Deref, DerefMut)]
-    struct BattleQuery {
-        id: i32,
-        #[sqlx(flatten)]
-        #[deref]
-        #[deref_mut]
-        schema: BattleRow,
-    }
-
     let now = Utc::now();
 
     let mut tx = state.db.begin().await?;
 
-    let battle_query = sqlx::query_as::<_, BattleQuery>(
+    let battle_query = sqlx::query_as::<_, BattleRow>(
         r#"
         SELECT
-            id, uuid, level_name, status, margin_score, inserted_at, closed_at
+            id, uuid, level_name, status, margin_score, replay_hash,
+            replay_filename, inserted_at, closed_at
         FROM
             battle
         WHERE
@@ -372,12 +379,12 @@ where
         }
 
         // Update base schema value
-        battle_query.schema.status = new_status;
+        battle_query.status = new_status;
     }
 
     // Update margin score if it is changed
     if let Some(margin_score) = request.margin_score {
-        battle_query.schema.margin_score = margin_score;
+        battle_query.margin_score = margin_score;
     }
 
     // Update match details
@@ -409,15 +416,16 @@ where
     }
 
     // Create battle struct
-    let mut battle = Battle::from(&battle_query.schema);
+    let mut battle = Battle::from(&battle_query);
 
-    preload_participants(&model, &mut battle, &mut *tx).await?;
+    battle.replay_url = get_replay_url(&battle_query, &state.config);
+    preload_participants(&mut battle, &model, &mut *tx).await?;
 
     // Update websocket listeners
     state
         .room
         .update_battle(BattleData {
-            schema: battle_query.schema,
+            schema: battle_query.clone(),
             participants: battle.participants.clone(),
         })
         .await;
@@ -430,98 +438,6 @@ where
     tx.commit().await?;
 
     Ok(AppJson(battle))
-}
-
-/// Preloads the `participants` field of a [`Battle`].
-///
-/// If this function fails, `battle` will not be modified.
-pub async fn preload_participants<T>(
-    model: &Model<T>,
-    battle: &mut Battle,
-    conn: &mut SqliteConnection,
-) -> Result<(), Error>
-where
-    T: mmr::Model + 'static,
-{
-    #[derive(FromRow)]
-    struct ParticipantsQuery {
-        player_id: i32,
-        short_id: String,
-        display_name: String,
-        #[sqlx(try_from = "u8")]
-        team: PlayerTeam,
-        finish_time: Option<i32>,
-        no_contest: bool,
-        skin: Option<String>,
-        kart_speed: Option<i32>,
-        kart_weight: Option<i32>,
-        rating: Option<f32>,
-        deviation: Option<f32>,
-        #[sqlx(rename = "rating_extra")]
-        extra: Option<String>,
-    }
-
-    let participants = sqlx::query_as::<_, ParticipantsQuery>(
-        r#"
-        SELECT
-            pt.*,
-            p.id AS player_id,
-            p.short_id,
-            p.display_name,
-            p.rating,
-            p.deviation,
-            p.rating_extra
-        FROM
-            participant pt, battle b, player p
-        WHERE
-            pt.match_id = b.id
-            AND pt.player_id = p.id
-            AND b.uuid = $1
-        "#,
-    )
-    .bind(&battle.id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    battle.participants = participants
-        .into_iter()
-        .map(|mut p| {
-            if !model.ratings_enabled() {
-                Ok((p, None))
-            } else if let Some((rating, deviation)) = p.rating.zip(p.deviation) {
-                let rating = RawRating {
-                    player_id: p.player_id,
-                    rating,
-                    deviation,
-                    extra: p.extra.take(),
-                };
-
-                Rating::<T::Data>::try_from(rating)
-                    .map_err(Error::new)
-                    .map(|rating| (p, Some(rating)))
-            } else {
-                Ok((p, None))
-            }
-        })
-        .map(|res| {
-            res.map(|(p, rating)| Participant {
-                player: Player {
-                    id: p.short_id,
-                    mmr: rating.map(|rating| rating.ordinal() as i32),
-                    display_name: p.display_name,
-                    public_key: None,
-                },
-                team: p.team,
-                finish_time: p.finish_time,
-                no_contest: p.no_contest,
-                skin: p.skin,
-                kart_speed: p.kart_speed,
-                kart_weight: p.kart_weight,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(())
 }
 
 async fn get_battle_id(match_id: Uuid, conn: &mut SqliteConnection) -> Result<i32, Error> {

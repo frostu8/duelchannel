@@ -4,6 +4,12 @@ base_url = "http://localhost:4001/api/v1"
 secure_sessions = false
 bot.enabled = true
 
+[cdn]
+base_url = "https://duelchannel-replays-bucket.s3.us-east-2.amazonaws.com"
+service = "s3"
+bucket = "duelchannel-replays-bucket"
+region = "us-east-2"
+
 [mmr]
 model = "openskill"
 command = "uv run main.py"

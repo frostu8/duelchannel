@@ -11,7 +11,7 @@ tracy = ["tracing-tracy"]
 
 [dependencies]
 ring-channel-model = { workspace = true }
-axum = { version = "0.8", features = ["macros", "ws"] }
+axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 axum-server = "0.7"
 chrono = { workspace = true }
 derive_more = { workspace = true, features = ["display", "error", "from", "deref", "deref_mut", "as_ref"] }
@@ -52,6 +52,8 @@ tokio-cron-scheduler = { version = "0.15", features = ["signal"] }
 tracing-tracy = { version = "0.11", features = ["enable"], optional = true }
 ron = "0.12.1"
 eyre = "0.6.12"
+opendal = { version = "0.56.0", features = ["services-fs", "services-s3"] }
+bytes = "1.11.1"
 
 [workspace]
 resolver = "3"

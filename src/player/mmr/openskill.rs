@@ -244,6 +244,7 @@ impl Process {
 
 /// A config for `openskill`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct OpenSkillConfig {
     /// The rating period.
     #[serde(

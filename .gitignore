@@ -30,3 +30,6 @@ target
 
 # redocly output
 /redoc-static.html
+
+# do not commit dev object storage
+/replays

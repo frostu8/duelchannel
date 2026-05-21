@@ -27,6 +27,8 @@ pub struct Battle {
     /// This is the number of margin boosts the match had. This is typically
     /// zero, and goes up steadily after 3 minutes of playtime.
     pub margin_score: i32,
+    /// A link to the replay associated with the match.
+    pub replay_url: Option<String>,
     /// Whether the match is accepting bets or not.
     pub accepting_bets: bool,
     /// When the match started.

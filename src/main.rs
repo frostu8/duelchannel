@@ -3,6 +3,7 @@ use std::{env, fmt::Debug, io, net::SocketAddr, path::PathBuf, sync::Arc};
 use eyre::OptionExt as _;
 use http::{HeaderValue, Method, header};
 
+use opendal::Operator;
 // :(
 use time::Duration;
 
@@ -22,13 +23,13 @@ use ring_channel::{
     app::{AppState, Model, Unrated},
     auth::oauth2::OauthState,
     cli::{self, Args, Command, MmrCommand, MmrDump},
-    config::{Config, RatingModelConfig, read_config},
+    config::{Config, RatingModelConfig, StorageService, read_config},
     error::Error,
     player::mmr::{self, glicko2::Glicko2, init_rating, next_rating_period, openskill::OpenSkill},
     room, routes,
 };
 
-use sqlx::{Connection, SqliteConnection, pool::PoolOptions};
+use sqlx::{Sqlite, pool::PoolOptions};
 
 use tokio::{main, select, signal, sync::Semaphore};
 
@@ -105,20 +106,48 @@ where
         .take()
         .ok_or_eyre("No `DATABASE_URL` set!")?;
 
+    // Connect to sqlite database
+    let db = PoolOptions::<Sqlite>::new().connect(&database_url).await?;
+
+    // Load object storage
+    let object_storage = match &config.cdn.service {
+        StorageService::Filesystem(fs) => {
+            tracing::info!("using filesystem object storage @ {}", fs.root.display());
+
+            std::fs::create_dir_all(&fs.root)?;
+            let fs = opendal::services::Fs::default()
+                // WTF? No OsString???
+                .root(
+                    fs.root
+                        .to_str()
+                        .ok_or_eyre("cannot parse filesystem root path")?,
+                );
+            Operator::new(fs)?.finish()
+        }
+        StorageService::S3(s3) => {
+            tracing::info!("using amazon s3 storage");
+
+            let s3 = opendal::services::S3::default()
+                .bucket(&s3.bucket)
+                .region(&s3.region)
+                .access_key_id(&s3.access_key_id)
+                .secret_access_key(&s3.access_key_secret);
+            Operator::new(s3)?.finish()
+        }
+    };
+
     // Run any pending commands
     if let Some(command) = cli.command.as_ref() {
         match command {
             Command::RegisterServer(server) => {
                 // establish connection
-                let mut conn = SqliteConnection::connect(&database_url).await?;
-                let mut tx = conn.begin().await?;
+                let mut tx = db.begin().await?;
 
                 tracing::info!("registering server {}", server.server_name);
 
-                cli::register_server(server, &mut tx).await?;
+                cli::register_server(server, &mut *tx).await?;
 
                 tx.commit().await?;
-                conn.close().await?;
             }
             Command::GenerateKey(_) => {
                 tracing::info!("generated! set ENCRYPTION_KEY or server.encryption_key on boot");
@@ -131,8 +160,7 @@ where
                 command: Some(MmrCommand::Reset(_)),
             }) => {
                 // establish connection
-                let mut conn = SqliteConnection::connect(&database_url).await?;
-                let mut tx = conn.begin().await?;
+                let mut tx = db.begin().await?;
 
                 tracing::info!("resetting all mmr...");
 
@@ -158,8 +186,7 @@ where
                 command: Some(MmrCommand::Dump(MmrDump { exclude })),
             }) => {
                 // establish connection
-                let mut conn = SqliteConnection::connect(&database_url).await?;
-                let mut tx = conn.begin().await?;
+                let mut tx = db.begin().await?;
 
                 // delete excluded participants
                 for id in exclude {
@@ -217,12 +244,10 @@ where
 
     tracing::info!("establishing connection to database");
 
-    // Connect to sqlite database
-    let db = PoolOptions::new().connect(&database_url).await?;
-
     // Create app state
     let state = AppState {
         config: Arc::new(config.clone()),
+        object_storage,
         db: db.clone(),
         room: room::Room::new(),
     };
@@ -250,6 +275,7 @@ where
                             "/players/{short_id}",
                             patch(routes::battle::player::update::<T>),
                         )
+                        .route("/replay", post(routes::battle::replay::upload::<T>))
                         .route("/wagers", get(routes::battle::wager::list))
                         .route("/wagers/~me", get(routes::battle::wager::show_self))
                         .route("/wagers/~me", put(routes::battle::wager::create))
