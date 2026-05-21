@@ -74,7 +74,7 @@ where
     // Write to memory while calculating hash
     let mut hash = Sha256::new();
     while let Some(chunk) = field.next().await {
-        let chunk = chunk.map_err(Error::new)?;
+        let chunk = chunk.map_err(ErrorKind::MultipartParse)?;
 
         if replay_data.len() + chunk.len() > MAX_REPLAY_SIZE {
             return Err(ErrorKind::ReplayTooLarge.into());
