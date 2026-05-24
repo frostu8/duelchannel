@@ -9,6 +9,9 @@ use serde::{
     de::{Error as _, Unexpected},
 };
 
+/// The length of an RRID public key.
+pub const PUBKEYLENGTH: usize = 32;
+
 /// A profile on the Ring Racers server.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct Profile {
@@ -50,11 +53,11 @@ impl Rrid {
     /// Creates an `Rrid` from a buffer of bytes.
     ///
     /// # Panics
-    /// Panics if length of `buf` is not 16.
+    /// Panics if length of `buf` is not [`PUBKEYLENGTH`].
     pub fn from_bytes(buf: impl AsRef<[u8]>) -> Rrid {
         let buf = buf.as_ref();
 
-        assert_eq!(buf.len(), 16);
+        assert_eq!(buf.len(), PUBKEYLENGTH);
 
         Rrid(base16::encode_upper(buf))
     }
