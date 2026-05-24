@@ -1,12 +1,12 @@
 //! Client error types.
 
-use derive_more::{Display, From};
+use derive_more::{Display, Error, From};
 
 use duelchannel_model::ApiError;
 use reqwest::header::InvalidHeaderValue;
 
 /// An error.
-#[derive(Debug, Display, From)]
+#[derive(Debug, Display, Error, From)]
 pub enum Error {
     /// An error occured in the reqwest client.
     #[display("{_0}")]

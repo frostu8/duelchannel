@@ -6,6 +6,6 @@ edition.workspace = true
 
 [dependencies]
 duelchannel-model = { workspace = true }
-derive_more = { workspace = true, features = ["display", "from"] }
+derive_more = { workspace = true, features = ["display", "from", "error"] }
 reqwest = { version = "0.13.3", features = ["json", "query"] }
 serde = { workspace = true, features = ["derive"] }
