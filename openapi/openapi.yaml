@@ -75,7 +75,6 @@ components:
         - public_key
         - name
         - team
-        - skin
       properties:
         user_id:
           type: string

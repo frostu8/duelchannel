@@ -218,7 +218,9 @@ pub async fn create(
             return Err(ErrorKind::MissingParticipant(input_player.user_id).into());
         };
 
-        upsert_skin(&input_player.skin, &mut *tx).await?;
+        if let Some(skin) = input_player.skin.as_ref() {
+            upsert_skin(skin, &mut *tx).await?;
+        }
 
         // add player to match
         sqlx::query(
@@ -241,7 +243,7 @@ pub async fn create(
         .bind(user_id)
         .bind(&input_player.name)
         .bind(u8::from(input_player.team))
-        .bind(&input_player.skin.name)
+        .bind(input_player.skin.as_ref().map(|s| &s.name))
         .execute(&mut *tx)
         .await?;
 
@@ -255,7 +257,7 @@ pub async fn create(
             team: input_player.team,
             finish_time: None,
             no_contest: false,
-            skin: Some(input_player.skin),
+            skin: input_player.skin,
         });
     }
 

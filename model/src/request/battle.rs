@@ -28,7 +28,8 @@ pub struct CreateBattleParticipant {
     /// What team they are on.
     pub team: PlayerTeam,
     /// The player's skin.
-    pub skin: Skin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<Skin>,
 }
 
 /// Request to set the placement of a player.
