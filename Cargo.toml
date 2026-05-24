@@ -41,7 +41,7 @@ twilight-model = { git = "https://github.com/twilight-rs/twilight.git" }
 twilight-http = { git = "https://github.com/twilight-rs/twilight.git" }
 clap = { version = "4", features = ["derive"] }
 sha2 = "0.10"
-base16 = "0.2"
+base16 = { workspace = true }
 cookie = { version = "0.18", features = ["private"] }
 pin-project = "1"
 futures-core = "0.3"
@@ -63,6 +63,7 @@ members = ["client","model"]
 edition = "2024"
 
 [workspace.dependencies]
+base16 = "0.2"
 bitflags = { version = "2.10.0", features = ["serde", "std"] }
 bytemuck = "1.24"
 chrono = { version = "0.4", features = ["serde"] }

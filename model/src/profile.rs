@@ -47,6 +47,18 @@ impl Rrid {
         s.as_ref().parse()
     }
 
+    /// Creates an `Rrid` from a buffer of bytes.
+    ///
+    /// # Panics
+    /// Panics if length of `buf` is not 16.
+    pub fn from_bytes(buf: impl AsRef<[u8]>) -> Rrid {
+        let buf = buf.as_ref();
+
+        assert_eq!(buf.len(), 16);
+
+        Rrid(base16::encode_upper(buf))
+    }
+
     /// Represents the Rrid as a string.
     pub fn as_str(&self) -> &str {
         <Self as AsRef<str>>::as_ref(self)

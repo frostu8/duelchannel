@@ -10,6 +10,7 @@ num_enum = { workspace = true }
 serde = { workspace = true }
 serde_repr = { workspace = true }
 serde_with = { workspace = true }
+base16 = { workspace = true }
 derive_more = { workspace = true, features = ["display", "error", "deref", "deref_mut", "from"] }
 bitflags = { workspace = true }
 bytemuck.workspace = true

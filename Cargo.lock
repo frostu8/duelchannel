@@ -972,6 +972,7 @@ dependencies = [
 name = "duelchannel-model"
 version = "0.1.0"
 dependencies = [
+ "base16",
  "bitflags",
  "bytemuck",
  "chrono",
