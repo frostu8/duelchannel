@@ -141,7 +141,7 @@ impl ClientBuilder {
                     headers.insert("X-API-KEY", value);
                 }
 
-                let client = client.build()?;
+                let client = client.default_headers(headers).build()?;
 
                 Ok(Client {
                     client,
