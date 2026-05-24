@@ -2,22 +2,16 @@
 
 use duelchannel_model::{
     ApiError, Rrid, User,
-    request::user::{CreateUser, CreateUserProfile},
+    request::user::{CreateUser, CreateUserProfile, ListUsers},
 };
-
-use serde::Serialize;
 
 use crate::{Client, Error};
 
 /// A list players request.
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct ListPlayers {
-    #[serde(skip)]
     client: Client,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    count: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    public_key: Option<Rrid>,
+    inner: ListUsers,
 }
 
 impl ListPlayers {
@@ -25,32 +19,33 @@ impl ListPlayers {
     pub fn new(client: Client) -> ListPlayers {
         ListPlayers {
             client,
-            count: None,
-            public_key: None,
+            inner: ListUsers::default(),
         }
     }
 
     /// The amount of players to return.
-    pub fn count(self, count: i32) -> ListPlayers {
-        ListPlayers {
-            count: Some(count),
-            ..self
-        }
+    pub fn count(mut self, count: i32) -> ListPlayers {
+        self.inner.count = Some(count);
+        self
     }
 
     /// The public key to search with.
-    pub fn public_key(self, public_key: Rrid) -> ListPlayers {
-        ListPlayers {
-            public_key: Some(public_key),
-            ..self
-        }
+    pub fn public_key(mut self, public_key: Rrid) -> ListPlayers {
+        self.inner.public_key = Some(public_key);
+        self
     }
 
     /// Fetches the list.
     pub async fn fetch(self) -> Result<Vec<User>, Error> {
         let url = format!("{}/players", self.client.state().endpoint);
 
-        let res = self.client.client().get(url).query(&self).send().await?;
+        let res = self
+            .client
+            .client()
+            .get(url)
+            .query(&self.inner)
+            .send()
+            .await?;
         if res.status().is_success() {
             res.json().await.map_err(Error::from)
         } else {

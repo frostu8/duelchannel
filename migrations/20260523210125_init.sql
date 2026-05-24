@@ -115,6 +115,18 @@ CREATE TABLE battle (
     updated_at TIMESTAMP NOT NULL
 );
 
+-- A list of skins, or characters, that players can play as.
+CREATE TABLE skin (
+    id INTEGER PRIMARY KEY,
+    -- The skin's internal ID
+    name VARCHAR(255) NOT NULL UNIQUE,
+    -- The skin's human-readable name.
+    realname VARCHAR(255) NOT NULL,
+    -- Kart stats
+    kartspeed INTEGER NOT NULL,
+    kartweight INTEGER NOT NULL
+);
+
 -- A player in a battle.
 CREATE TABLE participant (
     id INTEGER PRIMARY KEY,
@@ -123,6 +135,9 @@ CREATE TABLE participant (
     -- The profile of the participant.
     profile_id INTEGER NOT NULL REFERENCES profile(id),
     -- The user playing on the profile.
+    -- This may be different from profile.parent_id in the case that the
+    -- profile was migrated to a new user. This is immutable so MMR
+    -- calculations do not behave unexpectedly.
     user_id INTEGER NOT NULL REFERENCES user(id),
     -- The display name of the player at the time of the match.
     name VARCHAR(255) NOT NULL,
@@ -133,13 +148,8 @@ CREATE TABLE participant (
     -- Whether or not the player no-contest'd
     no_contest BOOLEAN NOT NULL DEFAULT FALSE,
     -- The skin of the player.
-    skin VARCHAR(255) NOT NULL,
-    -- The human-readable name of the skin.
-    skin_name VARCHAR(255) NOT NULL,
-    -- The player's kart speed at the time of the match.
-    kart_speed INTEGER NOT NULL,
-    -- The player's kart weight at the time of the match.
-    kart_weight INTEGER NOT NULL,
+    -- May be null for very old matches.
+    skin VARCHAR(255) REFERENCES skin(name),
 
     UNIQUE(match_id, profile_id)
 );

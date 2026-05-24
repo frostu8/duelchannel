@@ -2,7 +2,18 @@
 
 use serde::{Deserialize, Serialize};
 
+use serde_with::skip_serializing_none;
+
 use crate::Rrid;
+
+/// A query for the list users endpoint.
+#[derive(Deserialize, Debug, Default, Serialize)]
+#[serde(default)]
+#[skip_serializing_none]
+pub struct ListUsers {
+    pub count: Option<i32>,
+    pub public_key: Option<Rrid>,
+}
 
 /// A request to create a user with some profiles.
 ///

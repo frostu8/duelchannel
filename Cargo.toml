@@ -46,7 +46,7 @@ cookie = { version = "0.18", features = ["private"] }
 pin-project = "1"
 futures-core = "0.3"
 axum-valid = { version = "0.24", default-features = false, features = ["garde", "basic"] }
-garde = { version = "0.22", features = ["derive"] }
+garde = { workspace = true, features = ["derive"] }
 humantime = "2"
 tracing-tracy = { version = "0.11", features = ["enable"], optional = true }
 ron = "0.12.1"
@@ -71,5 +71,6 @@ derive_more = "2"
 duelchannel-model = { path = "./model" }
 num_enum = "0.7"
 serde = { version = "1", features = ["derive"] }
+garde = "0.22"
 serde_repr = "0.1"
 serde_with = "3"

@@ -191,18 +191,6 @@ where
     type Rejection = Error;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        #[derive(FromRow)]
-        struct UserQuery {
-            username: String,
-            avatar: Option<String>,
-            display_name: String,
-            mobiums: i64,
-            mobiums_gained: i64,
-            mobiums_lost: i64,
-            #[sqlx(try_from = "i32")]
-            flags: UserFlags,
-        }
-
         let session = parts.extract_with_state::<Session, S>(state).await?;
 
         let state = AppState::from_ref(state);
