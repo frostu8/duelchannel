@@ -22,7 +22,7 @@ class Rating:
     A Duel Channel rating.
     """
 
-    player_id: int
+    user_id: int
     rating: float
     deviation: float
     ordinal: float
@@ -38,7 +38,7 @@ class Rating:
         return cls(id, rating.mu, rating.sigma, ordinal)
 
     def tomodel(self) -> BradleyTerryFullRating:
-        return model.create_rating([self.rating, self.deviation], str(self.player_id))
+        return model.create_rating([self.rating, self.deviation], str(self.user_id))
 
 @dataclass
 class RatingRecord:
@@ -46,7 +46,7 @@ class RatingRecord:
     A Duel Channel rating record.
     """
 
-    player_id: int
+    user_id: int
     period_id: int
     rating: float
     deviation: float
@@ -54,7 +54,7 @@ class RatingRecord:
     ordinal: float
 
     def tomodel(self) -> BradleyTerryFullRating:
-        return model.create_rating([self.rating, self.deviation], str(self.player_id))
+        return model.create_rating([self.rating, self.deviation], str(self.user_id))
 
 @dataclass
 class Matchup:
@@ -112,7 +112,7 @@ def run():
                     "type": "UpdateConfig",
                 }
             case "CreateRating":
-                id = data["player_id"]
+                id = data["user_id"]
 
                 # Make a rating in the model
                 rating = model.rating(name=str(id))

@@ -19,7 +19,7 @@ use derive_more::{Display, From};
 
 use http::StatusCode;
 
-use ring_channel_model::ApiError;
+use duelchannel_model::{ApiError, Rrid};
 
 use uuid::Uuid;
 
@@ -38,7 +38,7 @@ impl Error {
     /// Constucts an internal error.
     pub fn new<E: StdError + Send + Sync + 'static>(e: E) -> Error {
         Error {
-            kind: ErrorKind::Other(eyre::Report::new(e)),
+            kind: ErrorKind::Other(Box::new(e)),
             message: None,
         }
     }
@@ -205,10 +205,10 @@ impl Error {
                     message: "Invalid csrf token passed".into(),
                 },
             ),
-            ErrorKind::NotEnoughMobiums => (
+            ErrorKind::ProfileInUse(rrid) => (
                 StatusCode::BAD_REQUEST,
                 ApiError {
-                    message: "You don't have that kind of money :(".into(),
+                    message: format!("profile {} already in use", rrid),
                 },
             ),
             ErrorKind::InvalidData(message) => (StatusCode::BAD_REQUEST, ApiError { message }),
@@ -300,6 +300,10 @@ pub enum ErrorKind {
     /// A battle was attempted to be started with a bad participant.
     #[display("Participant {_0} not found")]
     MissingParticipant(String),
+    /// A user was attempted to be created with a profile that is already in
+    /// use.
+    #[display("Profile {_0} already used")]
+    ProfileInUse(Rrid),
     /// A content type was not provided.
     MissingContentType,
     /// The server cannot serve this content type.
@@ -322,9 +326,6 @@ pub enum ErrorKind {
     /// An invalid csrf token was passed.
     #[display("Csrf verification failed")]
     InvalidCsrfToken,
-    /// No mobiums?
-    #[display("Not enough mobiums")]
-    NotEnoughMobiums,
     /// A valid schema was passed, but the data was otherwise invalid.
     #[display("{_0}")]
     #[from(ignore)]
@@ -361,7 +362,7 @@ pub enum ErrorKind {
     /// Only the message is preserved! All errors of this kind are internal.
     /// Use as a last resort.
     #[from(ignore)]
-    Other(eyre::Report),
+    Other(Box<dyn StdError + Send + Sync + 'static>),
 }
 
 impl IntoResponse for Error {

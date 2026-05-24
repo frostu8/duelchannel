@@ -1,6 +1,6 @@
 [server]
-redirect_url = "http://localhost:4001/"
-base_url = "http://localhost:4001/api/v1"
+redirect_url = "http://localhost:4000/"
+base_url = "http://localhost:4000"
 secure_sessions = false
 bot.enabled = true
 

@@ -9,23 +9,14 @@ use serde::{
     de::{Error as _, Unexpected},
 };
 
-/// A player on the Ring Racers server.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Player {
-    /// The 6-digit short id for the player.
-    pub id: String,
-    /// The last display name used by the player.
-    pub display_name: String,
-    /// The player's MMR.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mmr: Option<i32>,
-    /// The public rrid of the player.
+/// A profile on the Ring Racers server.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+pub struct Profile {
+    /// The public rrid of the profile.
     ///
     /// The base16 encoded public key of the player, which is a 64-character
-    /// string. Encoded in full; while this does uniquely identify the player,
-    /// the server will generate a short code for them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub public_key: Option<Rrid>,
+    /// string.
+    pub public_key: Rrid,
 }
 
 /// A character a player has selected.
@@ -47,7 +38,7 @@ pub struct Skin {
 }
 
 /// Ring Racers ID.
-#[derive(Clone, Debug, Deref, Display)]
+#[derive(Clone, Debug, Deref, Display, PartialEq, Eq, Hash)]
 pub struct Rrid(String);
 
 impl Rrid {
@@ -93,7 +84,7 @@ impl FromStr for Rrid {
             if let Some(idx) = idx {
                 Err(RridParseError::InvalidChar { valid_up_to: idx })
             } else {
-                Ok(Rrid(s.to_owned()))
+                Ok(Rrid(s.to_uppercase()))
             }
         } else {
             Err(RridParseError::InvalidLength { len: s.len() })

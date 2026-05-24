@@ -2,7 +2,7 @@ openapi: 3.0.4
 info:
   title: Duel Channel API
   description: >
-    Access API for the Duel Channel Ring Racers server. Get your Mobiums up!
+    Access API for the Duel Channel Ring Racers server.
   contact:
     name: frostu8
     email: theguy@frostu8.rs
@@ -19,9 +19,7 @@ tags:
   - name: match
     description: Match-related operations.
   - name: player
-    description: Endpoints that operate only on players.
-  - name: user
-    description: Humans that access the application.
+    description: Endpoints that operate on players.
   - name: server
     description: Endpoints for servers.
 
@@ -36,287 +34,87 @@ components:
       in: cookie
       name: id
   schemas:
-    Player:
+    CreateUser:
       type: object
       required:
-        - id
         - display_name
+        - profiles
       properties:
-        id:
-          type: string
-          description: The player's "short ID."
-          pattern: '^[\dA-Z]{6}$'
         display_name:
           type: string
-          description: The most-recent display name of the player.
+          description: The display name of the player.
+        profiles:
+          type: array
+          description: The profiles of the player.
+          items:
+            type: object
+            required: [public_key]
+            properties:
+              public_key:
+                type: string
+                description: The player's 64-length "RRID."
+                pattern: '^[\dA-Fa-f]{64}$'
+    CurrentUser:
+      allOf:
+        - $ref: "#/components/schemas/User"
+    Profile:
+      type: object
+      required:
+        - public_key
+      properties:
         public_key:
           type: string
           description: The player's 64-length "RRID."
           pattern: '^[\dA-Fa-f]{64}$'
-    CreatePlayer:
-      type: object
-      required:
-        - display_name
-        - public_key
-      properties:
-        display_name:
-          type: string
-          description: The player's current display name.
-        public_key:
-          type: string
-          description: >
-            The player's 64-length "RRID."
-
-            Ring Racers profiles keep a public-private key pair to identify
-            themselves to servers. This is the public key, untrimmed.
-          pattern: '^[\dA-Fa-f]{64}$'
-    Participant:
-      allOf:
-        - $ref: "#/components/schemas/Player"
-        - type: object
-          required:
-            - team
-            - no_contest
-          properties:
-            team:
-              type: integer
-              description: The team number the player is on.
-            finish_time:
-              type: integer
-              description: The finish time of the player, in game tics.
-            no_contest:
-              type: boolean
-              description: >
-                Whether or not the player was allowed to finish.
-
-                A `true` `no_contest` means that the player was absolutely not
-                allowed to finish, but a `false` `no_contest` does not imply
-                the opposite; that is, the player was able to finish. A set
-                `finish_time` will let you know if the player did finish.
-    Match:
-      type: object
-      required:
-        - id
-        - level_name
-        - participants
-        - status
-        - started_at
-        - accepting_bets
-      properties:
-        id:
-          type: string
-          description: The match UUID.
-          pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
-        level_name:
-          type: string
-          description: The name of the level the match was played on.
-        participants:
-          type: array
-          description: A list of participants in the match.
-          items:
-            $ref: "#/components/schemas/Participant"
-        status:
-          $ref: "#/components/schemas/MatchStatus"
-        started_at:
-          type: string
-          description: When the match started.
-          format: date-time
-        accepting_bets:
-          type: boolean
-          description: Whether or not the match is still accepting bets.
-        closes_in:
-          type: integer
-          description: The time elapsed before wagers close, in ms.
-    Wager:
-      type: object
-      required:
-        - mobiums
-        - victor
-        - updated_at
-      properties:
-        user:
-          $ref: "#/components/schemas/User"
-        mobiums:
-          type: integer
-          description: The amount of mobiums riding on this bet.
-        victor:
-          type: integer
-          description: The team this user is wagering on.
-        updated_at:
-          type: string
-          description: The time when the wager was made or updated.
-          format: date-time
     User:
       type: object
       required:
-        - username
-        - avatar
-        - display_name
-        - mobiums
-      properties:
-        username:
-          type: string
-          description: The user's unique username.
-        avatar:
-          type: string
-          description: A url to the user's avatar.
-          nullable: true
-        display_name:
-          type: string
-          description: The user's display name.
-        mobiums:
-          type: integer
-          description: How many mobiums the user currently has.
-          format: int64
-    CurrentUser:
-      type: object
-      required:
-        - username
-        - avatar
-        - display_name
-        - mobiums
-      properties:
-        username:
-          type: string
-          description: >
-            The user's unique username.
-
-            May be null if the generated username for the user conflicted, or
-            failed some other constraints. In this case, you need to manually
-            set your username.
-          nullable: true
-        avatar:
-          type: string
-          description: A url to the user's avatar.
-          nullable: true
-        display_name:
-          type: string
-          description: The user's display name.
-        mobiums:
-          type: integer
-          description: How many mobiums the user currently has.
-          format: int64
-    CreateMatch:
-      type: object
-      required:
-        - level_name
-        - participants
-      properties:
-        level_name:
-          type: string
-          description: The name of the level the match will be played on.
-        participants:
-          type: array
-          description: A list of participants ids and their details.
-          items:
-            type: object
-            required:
-              - id
-              - team
-            properties:
-              id:
-                type: string
-                description: A player's "short ID."
-                pattern: '^[\dA-Z]{6}$'
-              team:
-                type: integer
-                description: The team number of the player.
-        bet_time:
-          type: integer
-          description: >
-            The amount of time to give to betting users before bets close.
-    UpdateMatch:
-      type: object
-      properties:
-        status:
-          $ref: "#/components/schemas/MatchStatus"
-    UpdatePlacement:
-      type: object
-      properties:
-        finish_time:
-          type: integer
-          description: The finish time of the player, in game tics.
-    UpdateWager:
-      type: object
-      required:
-        - mobiums
-        - victor
-        - csrf
-      properties:
-        mobiums:
-          type: integer
-          description: >
-            The amount of mobiums to wager.
-
-            This cannot be higher than the amount of mobiums you have, or lower
-            than 0.
-        victor:
-          type: integer
-          description: >
-            The team number to set your wager on. If this team wins, you win
-            your cut of the pot.
-        csrf:
-          type: string
-          description: A CSRF token issued by the server.
-    MatchStatus:
-      type: integer
-      description: >
-        The status of a match.
-
-        * `0` **Ongoing**  
-          The match is still running. **Note**, a match that is running may
-          not be accepting any more bets.
-        * `1` **Concluded**  
-          The match has ended, and the pots have been divvied up.
-        * `2` **Cancelled**  
-          The match ended abnormally. It may not have a victor, and wagers were
-          returned.
-      enum: [0, 1, 2]
-    Server:
-      type: object
-      required:
         - id
-        - name
-        - bans
+        - display_name
+        - avatar_url
+        - flags
       properties:
         id:
+          type: string
+          description: The player's short ID.
+          pattern: '^[\dA-Z]{6}$'
+        display_name:
+          type: string
+          description: The display name of the player.
+        avatar_url:
+          type: string
+          nullable: true
+          description: The URI of the player's avatar.
+        mmr:
           type: integer
-          description: The unique identifier of the server.
-        name:
-          type: string
+          description: The player's current MMR.
+        flags:
+          $ref: "#/components/schemas/UserFlags"
+        profiles:
+          type: array
           description: >
-            The human-readable name of the server, typically defined by the server
-            owner.
-        bans:
-          type: object
-          additionalProperties:
-            $ref: "#/components/schemas/MapConfig"
-    MapConfig:
-      type: object
-      required:
-        - status
-      properties:
-        status:
-          $ref: "#/components/schemas/BannedStatus"
-        note:
-          type: string
-          description: An optional user-defined note on the map.
-    BannedStatus:
+            The user's profiles.
+
+            While a user can be found through their RRID, their profiles are
+            not publicly visible.
+          items:
+            $ref: "#/components/schemas/Profile"
+    UserFlags:
       type: integer
       description: >
-        The status of a match.
+        The user's flags.
 
-        * `0` **Blacklist**  
-          The map is banned and not in play.
-        * `1` **Whitelist**  
-          The map is not banned.
-        * `2` **Suspect**  
-          The map is not banned. This is purely informational.
-      enum: [0, 1, 2]
+        | Bit Pattern | Description |
+        | --- | --- |
+        | `1` | The user is an administrator. |
+        | `1 << 1` | Beta tester given to those that played during the Duel
+        Channel beta period. |
+        | `1 << 2` | The player has broken an MMR threshold at a certain
+        point. |
     Error:
       type: object
       description: >
-        A generic API error.
+        An API error.
       required:
         - message
       properties:
@@ -324,74 +122,26 @@ components:
           type: string
           description: A description of the error.
   examples:
-    matchExample:
-      value:
-        id: 18e0b086-5557-4245-877d-19729bf6d4bd
-        level_name: Robotnik Coaster
-        participants:
-          - id: GJBIJK
-            display_name: Dr. Robotnik
-            team: 0
-            finish_time: 36149
-            no_contest: false
-          - id: 4ZWBU0
-            display_name: Tails
-            team: 1
-            no_contest: true
-        status: 1
-        started_at: 2025-10-27T08:25:37.318613303Z
-        accepting_bets: false
-    participantExample:
+    userExample:
       value:
         id: GJBIJK
         display_name: Dr. Robotnik
-        team: 0
-        finish_time: 36149
-        no_contest: false
-    playerExample:
-      value:
-        id: 4ZWBU0
-        display_name: Tails
-    userExample:
-      value:
-        username: frostu8
-        avatar: https://nicememe.website/avatar.png
-        display_name: Ring Racer
-        mobiums: 143
-    wagerExample:
-      value:
-        user:
-          username: frostu8
-          avatar: https://nicememe.website/avatar.png
-          display_name: Ring Racer
-          mobiums: 143
-        mobiums: 143
-        victor: 0
-        updated_at: 2025-10-24T05:37:07.578866465Z
-    serverExample:
-      value:
-        id: 420
-        name: The Big Ben
-        bans:
-          RR_GreenTriangle:
-            status: 1
-            note: Awesome map.
-          RR_ScarletGardens:
-            status: 0
-    apiKeyUnauthenticatedExample:
-      value:
-        message: No API key passed; set an X-API-Key header!
+        avatar_url: null
+        mmr: 2023
+        flags: 4
 
 paths:
-  /matches:
+  /players:
     get:
       tags:
-        - match
-      summary: Fetch All Matches
+        - player
+      summary: List Players
       description: >
-        Fetches all the matches that have taken place.
+        Fetches a list of players.
+
+        By default, this is sorted by ordinal
       security: []
-      operationId: fetch_all_matches
+      operationId: list_players
       parameters:
         - name: count
           in: query
@@ -401,585 +151,77 @@ paths:
             minimum: 1
             maximum: 50
             example: 50
-        - name: before
+        - name: public_key
           in: query
-          description: Get matches before this time
+          description: A public key to search by
           schema:
             type: string
-            example: 2025-10-27T06:53:21.694619841Z
-            format: date-time
-        - name: after
-          in: query
-          description: Get matches afterr this time
-          schema:
-            type: string
-            example: 2025-10-27T06:53:21.694619841Z
-            format: date-time
+            example: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+            pattern: '^[\dA-Fa-f]{64}$'
       responses:
         "200":
-          description: A list of matches
+          description: The users requested.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Match"
-              example:
-                - id: 18e0b086-5557-4245-877d-19729bf6d4bd
-                  level_name: Robotnik Coaster
-                  participants:
-                    - id: GJBIJK
-                      display_name: Dr. Robotnik
-                      team: 0
-                      no_contest: false
-                    - id: 4ZWBU0
-                      display_name: Tails
-                      team: 1
-                      no_contest: false
-                  status: 0
-                  started_at: 2025-10-27T08:25:37.318613303Z
-                  accepting_bets: true
-                  closes_in: 10203
-                - id: 18e0b086-5557-4245-877d-19729bf6d4bd
-                  level_name: Robotnik Coaster
-                  participants:
-                    - id: GJBIJK
-                      display_name: Dr. Robotnik
-                      team: 0
-                      finish_time: 36149
-                      no_contest: false
-                    - id: 4ZWBU0
-                      display_name: Tails
-                      team: 1
-                      no_contest: true
-                  status: 1
-                  started_at: 2025-10-27T08:25:37.318613303Z
-                  accepting_bets: false
+                $ref: "#/components/schemas/CurrentUser"
+              examples:
+                userExample:
+                  $ref: "#/components/examples/userExample"
         "400":
           description: >
-            A bad count was given, or before or after was a malformed datetime.
+            `count` is not in range, or the `public_key` provided was badly
+            formed.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
     post:
       tags:
-        - match
-      summary: Create Match
+        - player
+      summary: Create Player
       description: >
-        Given the specifications of the match, starts a new match, notifying
-        all clients currently connected.
-
-        A match's bet end time will be determined as soon as it's created.
-        Bets will begin to march even during this response!
+        Creates a new player with given profiles.
       security:
         - apiKey: []
-      operationId: create_match
+      operationId: create_player
       requestBody:
-        description: The match setup details.
+        description: The player's details.
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateMatch"
-            example:
-              level_name: Robotnik Coaster
-              bet_time: 15
-              participants:
-                - id: GJBIJK
-                  team: 0
-                - id: 4ZWBU0
-                  team: 1
+              $ref: "#/components/schemas/CreateUser"
           application/x-www-form-urlencoded:
             schema:
-              $ref: "#/components/schemas/CreateMatch"
+              $ref: "#/components/schemas/CreateUser"
       responses:
-        "201":
-          description: The created match.
+        "200":
+          description: The user was successfully created.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Match"
-              example:
-                id: 18e0b086-5557-4245-877d-19729bf6d4bd
-                level_name: Robotnik Coaster
-                participants:
-                  - id: GJBIJK
-                    display_name: Dr. Robotnik
-                    team: 0
-                    no_contest: false
-                  - id: 4ZWBU0
-                    display_name: Tails
-                    team: 1
-                    no_contest: false
-                status: 0
-                started_at: 2025-10-27T08:25:37.318613303Z
-                accepting_bets: true
-                closes_in: 10203
-        "400":
-          description: >
-            A participant was added to the match that does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/User"
+              examples:
+                userExample:
+                  $ref: "#/components/examples/userExample"
         "401":
           description: Client is unauthenticated.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-              examples:
-                apiKeyUnauthenticatedExample:
-                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
-  /matches/{match_id}:
-    get:
-      tags:
-        - match
-      summary: Fetch Match
-      description: >
-        Fetches a passed or ongoing match.
-      security: []
-      operationId: fetch_match
-      parameters:
-        - name: match_id
-          in: path
-          description: Match UUID
-          required: true
-          schema:
-            type: string
-            example: 18e0b086-5557-4245-877d-19729bf6d4bd
-            pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
-      responses:
-        "200":
-          description: The updated match.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Match"
-              examples:
-                matchExample:
-                  $ref: "#/components/examples/matchExample"
-        "404":
-          description: >
-            Requested match does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    patch:
-      tags:
-        - match
-      summary: Modify Match
-      description: >
-        **This endpoint cannot modify concluded matches.** When matches are
-        concluded through this endpoint, they are locked.
-      security:
-        - apiKey: []
-      operationId: modify_match
-      parameters:
-        - name: match_id
-          in: path
-          description: Match UUID
-          required: true
-          schema:
-            type: string
-            example: 18e0b086-5557-4245-877d-19729bf6d4bd
-            pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
-      requestBody:
-        description: The properties to update about the match.
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateMatch"
-            example:
-              status: 1
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: "#/components/schemas/UpdateMatch"
-      responses:
-        "200":
-          description: The updated match.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Match"
-              examples:
-                matchExample:
-                  $ref: "#/components/examples/matchExample"
-        "400":
-          description: >
-            Attempted to modify an already concluded match.
-
-            If the match has its `status` to **Concluded** or **Cancelled**, it
-            is protected from updates.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Client is unauthenticated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              examples:
-                apiKeyUnauthenticatedExample:
-                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
-        "404":
-          description: >
-            Requested match does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /matches/{match_id}/players/{player_id}:
-    patch:
-      tags:
-        - match
-      summary: Modify Player Placement
-      description: >
-        This endpoint should be invoked when players exit levels; i.e. they
-        finish with a finish time.
-
-        If the match is concluded, you will be unable to update a player's
-        placements. The only way to set a `no_contest` value is by concluding
-        the match without updating the player's placement.
-      security:
-        - apiKey: []
-      operationId: modify_player_placement
-      parameters:
-        - name: match_id
-          in: path
-          description: Match UUID
-          required: true
-          schema:
-            type: string
-            example: 18e0b086-5557-4245-877d-19729bf6d4bd
-            pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
-        - name: player_id
-          in: path
-          description: Player ID
-          required: true
-          schema:
-            type: string
-            example: GJBIJK
-            pattern: '^[\dA-Z]{6}$'
-      requestBody:
-        description: The new player's placement information.
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdatePlacement"
-            example:
-              finish_time: 36149
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: "#/components/schemas/UpdatePlacement"
-      responses:
-        "200":
-          description: The updated participant.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Participant"
-              examples:
-                participantExample:
-                  $ref: "#/components/examples/participantExample"
-        "400":
-          description: >
-            Attempted to modify an already concluded match.
-
-            If the match has its `status` to **Concluded** or **Cancelled**, it
-            is protected from updates.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Client is unauthenticated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              examples:
-                apiKeyUnauthenticatedExample:
-                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
-        "404":
-          description: >
-            The match does not exist, the player does not exist, or the player
-            is not participating in this match.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /players/{player_id}:
+  /players/~me:
     get:
       tags:
         - player
-      summary: Fetch Player
-      description: >
-        Gets the latest information about the given player.
-
-        This endpoint cannot be used to get a player's public key.
-      security: []
-      operationId: get_player
-      parameters:
-        - name: player_id
-          in: path
-          description: Player ID
-          required: true
-          schema:
-            type: string
-            example: GJBIJK
-            pattern: '^[\dA-Z]{6}$'
-      responses:
-        "200":
-          description: The player.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Player"
-              examples:
-                playerExample:
-                  $ref: "#/components/examples/playerExample"
-        "404":
-          description: The player with that ID does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /matches/{match_id}/wagers:
-    get:
-      tags:
-        - match
-      summary: Fetch All Wagers
-      description: >
-        Gets all the wagers made on a match.
-      security: []
-      operationId: fetch_all_wagers
-      parameters:
-        - name: match_id
-          in: path
-          description: Match UUID
-          required: true
-          schema:
-            type: string
-            example: 18e0b086-5557-4245-877d-19729bf6d4bd
-            pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
-      responses:
-        "200":
-          description: The wager.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Wager"
-              examples:
-                wagerExample:
-                  value:
-                    - user:
-                        username: frostu8
-                        avatar: https://nicememe.website/avatar.png
-                        display_name: Ring Racer
-                        mobiums: 143
-                      mobiums: 143
-                      victor: 0
-                      updated_at: 2025-10-24T05:37:07.578866465Z
-        "404":
-          description: The match does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /matches/{match_id}/wagers/~me:
-    get:
-      tags:
-        - match
-      summary: Fetch Self Wager
-      description: >
-        Gets the current user's wager on a match.
+      summary: Get Current Player
+      description: Fetches the currently authenticated player.
       security:
         - cookie: []
-      operationId: fetch_self_wager
-      parameters:
-        - name: match_id
-          in: path
-          description: Match UUID
-          required: true
-          schema:
-            type: string
-            example: 18e0b086-5557-4245-877d-19729bf6d4bd
-            pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
+      operationId: get_player_self
       responses:
         "200":
-          description: The wager.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Wager"
-              examples:
-                wagerExample:
-                  $ref: "#/components/examples/wagerExample"
-        "404":
-          description: >
-            The match does not exist, or the user hasn't wagered anything.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    put:
-      tags:
-        - match
-      summary: Update Self Wager
-      description: >
-        Updates the authenticated user's wager on a match.
-      security:
-        - cookie: []
-      operationId: update_self_wager
-      parameters:
-        - name: match_id
-          in: path
-          description: Match UUID
-          required: true
-          schema:
-            type: string
-            example: 18e0b086-5557-4245-877d-19729bf6d4bd
-            pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
-      requestBody:
-        description: The new player's placement information.
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateWager"
-            example:
-              mobiums: 399
-              victor: 0
-              csrf: <csrf_token>
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: "#/components/schemas/UpdateWager"
-      responses:
-        "200":
-          description: The updated wager.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Wager"
-              examples:
-                wagerExample:
-                  $ref: "#/components/examples/wagerExample"
-        "400":
-          description: >
-            One of the following:
-
-            * You provided an invalid CSRF token.
-            * You attempted to bet a negative amount of mobiums, or you
-              attempted to bet with more mobiums than you have.
-            * You attempted to bet on a team with no players.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "401":
-          description: Client is unauthenticated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              examples:
-                apiKeyUnauthenticatedExample:
-                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
-        "404":
-          description: The match does not exist.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /players:
-    post:
-      tags:
-        - player
-      summary: Register Player
-      description: >
-        This endpoint is idempotent; given the same public key, it will always
-        return the same id for the player.
-      security:
-        - apiKey: []
-      operationId: register_player
-      requestBody:
-        description: The details of the player to register.
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreatePlayer"
-            example:
-              display_name: Tails
-              public_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: "#/components/schemas/CreatePlayer"
-      responses:
-        "201":
-          description: The created player.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Player"
-              examples:
-                playerExample:
-                  $ref: "#/components/examples/playerExample"
-        "401":
-          description: Client is unauthenticated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-              examples:
-                apiKeyUnauthenticatedExample:
-                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
-  /servers/~me:
-    get:
-      tags:
-        - server
-      summary: Fetch Current Server
-      description: >
-        Displays information about the server currently authenticated by the
-        given token.
-      security:
-        - apiKey: []
-      operationId: fetch_current_server
-      responses:
-        "200":
-          description: The server.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Server"
-              examples:
-                serverExample:
-                  $ref: "#/components/examples/serverExample"
-        "401":
-          description: Client is unauthenticated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-  /users/~me:
-    get:
-      tags:
-        - user
-      summary: Fetch Current User
-      description: >
-        Displays information about the user currently authenticated by this
-        session.
-      security:
-        - cookie: []
-      operationId: fetch_current_user
-      responses:
-        "200":
-          description: The currently logged-in user.
+          description: The currently authenticated user.
           content:
             application/json:
               schema:
@@ -989,6 +231,39 @@ paths:
                   $ref: "#/components/examples/userExample"
         "401":
           description: User is unauthenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /players/{player_id}:
+    get:
+      tags:
+        - player
+      summary: Get Player
+      description: Fetches the currently authenticated player.
+      security: []
+      operationId: get_player
+      parameters:
+        - name: player_id
+          in: path
+          description: Player short ID
+          required: true
+          schema:
+            type: string
+            example: GIGIJO
+            pattern: '^[\dA-Z]{6}$'
+      responses:
+        "200":
+          description: The user corresponding to the given short id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+              examples:
+                userExample:
+                  $ref: "#/components/examples/userExample"
+        "404":
+          description: The user couldn't be found.
           content:
             application/json:
               schema:

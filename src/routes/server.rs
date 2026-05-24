@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use axum::extract::State;
 
 use chrono::Utc;
-use ring_channel_model::{
+use duelchannel_model::{
     request::server::UpdateServerRequest,
     server::{BannedStatus, MapConfig, Server},
 };

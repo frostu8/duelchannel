@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::battle::{BattleStatus, PlayerTeam};
+use crate::{
+    battle::{BattleStatus, PlayerTeam},
+    profile::Skin,
+};
 
 /// Request to create a match.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -21,16 +24,12 @@ pub struct CreateBattleRequest {
 /// A participant in a [`CreateBattleRequest`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreateBattleParticipant {
-    /// The ID of the participant.
+    /// The short ID of the participant.
     pub id: String,
     /// What team they are on.
     pub team: PlayerTeam,
-    /// The player's kartspeed.
-    pub kart_speed: i32,
-    /// The player's kartweight.
-    pub kart_weight: i32,
-    /// The skin the player is running.
-    pub skin: String,
+    /// The player's skin.
+    pub skin: Skin,
 }
 
 /// Request to set the placement of a player.
@@ -66,23 +65,4 @@ pub struct UpdateBattleRequest {
     /// Updates the margin score of the battle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub margin_score: Option<i32>,
-}
-
-/// Request to update a wager.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct UpdateWager {
-    /// The mobiums the user bets.
-    ///
-    /// This can only be between 0 and the mobiums the user has.
-    ///
-    /// If this is 0, this removes the wager.
-    pub mobiums: i64,
-    /// The victor the user is betting on.
-    ///
-    /// If this team wins, they will be paid out.
-    pub victor: PlayerTeam,
-    /// The [CSRF token].
-    ///
-    /// [CSRF token]: crate::session::Session::shuffle_csrf
-    pub csrf: String,
 }

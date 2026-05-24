@@ -20,7 +20,7 @@ use serde::de::DeserializeOwned;
 
 use sqlx::SqlitePool;
 
-use crate::{config::Config, player::mmr, room};
+use crate::{config::Config, schema::user::mmr};
 
 use crate::error::{Error, ErrorKind};
 
@@ -33,8 +33,6 @@ pub struct AppState {
     pub db: SqlitePool,
     /// The object storage.
     pub object_storage: Operator,
-    /// The WebSocket room.
-    pub room: room::Room,
     /// Server config.
     ///
     /// May be missing secrets as they are taken at initialization.

@@ -1,159 +1,163 @@
-//! Active player routes.
+//! Users endpoints.
 
 use axum::{
     Extension,
     extract::{Path, State},
 };
-
 use chrono::Utc;
-
-use http::StatusCode;
-
-use ring_channel_model::{Player, request::player::RegisterPlayerRequest};
-
-use sqlx::FromRow;
-
-use tracing::instrument;
+use duelchannel_model::{
+    Profile, Rrid, User,
+    request::user::CreateUser,
+    user::{CurrentUser, UserFlags},
+};
+use garde::Validate;
+use serde::Deserialize;
 
 use crate::{
-    app::{AppJson, AppState, Model, Payload},
+    app::{AppForm, AppGarde, AppJson, AppState, Model, Payload},
     auth::api_key::ServerAuthentication,
-    error::Error,
-    player::{
-        create_player, get_player,
-        mmr::{self, Rating, RawRating, init_rating},
+    error::{Error, ErrorKind},
+    schema::user::{
+        UserBuilder, UserRow, get_user_by_short_id,
+        mmr::{self, init_rating},
+        preload_profiles,
     },
+    session::SessionUser,
 };
 
-pub const MAX_INSERT_ATTEMPTS: usize = 25;
-
-/// Shows a player.
-#[instrument(skip(state, model))]
-pub async fn show<T>(
-    Path((short_id,)): Path<(String,)>,
-    Extension(model): Extension<Model<T>>,
-    State(state): State<AppState>,
-) -> Result<AppJson<Player>, Error>
-where
-    T: mmr::Model + 'static,
-{
-    let mut conn = state.db.acquire().await?;
-
-    get_player(&short_id, &mut conn)
-        .await
-        .and_then(|f| f.ok_or_else(|| Error::not_found(format!("Player {} not found", short_id))))
-        .and_then(|player| player.normalize(&model))
-        .map(|player| AppJson(player))
+/// A query for [`list`].
+#[derive(Deserialize, Debug, Validate)]
+#[serde(default)]
+#[garde(context(AppState as state))]
+pub struct ListUsersQuery {
+    #[garde(range(min = 1, max = 50))]
+    pub count: i32,
+    #[garde(skip)]
+    pub public_key: Option<Rrid>,
 }
 
-/// Registers a joined player.
-///
-/// All players must be registered to create matches for them!
-#[instrument(skip(state, model))]
-pub async fn register<T>(
-    _auth_guard: ServerAuthentication,
-    Extension(model): Extension<Model<T>>,
-    State(state): State<AppState>,
-    Payload(request): Payload<RegisterPlayerRequest>,
-) -> Result<(StatusCode, AppJson<Player>), Error>
-where
-    T: mmr::Model + 'static,
-{
-    #[derive(FromRow)]
-    struct UpsertQuery {
-        #[sqlx(rename = "player_id")]
-        id: i32,
-        short_id: String,
-        display_name: String,
-        rating: Option<f32>,
-        deviation: Option<f32>,
-        #[sqlx(rename = "rating_extra")]
-        extra: Option<String>,
+impl Default for ListUsersQuery {
+    fn default() -> Self {
+        ListUsersQuery {
+            count: 20,
+            public_key: None,
+        }
     }
+}
+
+/// Creates a new user.
+pub async fn create<T>(
+    _auth_guard: ServerAuthentication,
+    State(state): State<AppState>,
+    Extension(model): Extension<Model<T>>,
+    Payload(request): Payload<CreateUser>,
+) -> Result<AppJson<User>, Error>
+where
+    T: mmr::Model + Send + Sync + 'static,
+{
+    let now = Utc::now();
 
     let mut tx = state.db.begin().await?;
 
-    let now = Utc::now();
+    // Create user based off specs
+    let row = UserBuilder::new(request.display_name)
+        .flags(UserFlags::BETA_TESTER)
+        .create(&mut *tx)
+        .await?;
 
-    // find existing player
-    let player_query = sqlx::query_as::<_, UpsertQuery>(
+    // Add profiles
+    let mut profiles = Vec::with_capacity(request.profiles.len());
+    for profile in request.profiles {
+        let res = sqlx::query(
+            r#"
+            INSERT INTO profile (inserted_at, updated_at, parent_id, public_key)
+            VALUES ($1, $1, $2, $3)
+            "#,
+        )
+        .bind(now)
+        .bind(row.id)
+        .bind(profile.public_key.as_str())
+        .execute(&mut *tx)
+        .await;
+
+        match res {
+            Ok(_) => {
+                profiles.push(Profile {
+                    public_key: profile.public_key,
+                });
+            }
+            Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
+                // The profile already exists!
+                return Err(ErrorKind::ProfileInUse(profile.public_key).into());
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    // Initialize rating
+    let rating = init_rating(row.id, &model, &mut *tx).await?;
+
+    tx.commit().await?;
+
+    Ok(AppJson(User {
+        profiles: Some(profiles),
+        mmr: Some(rating.ordinal() as i32),
+        ..User::from(&row)
+    }))
+}
+
+/// Lists all users.
+pub async fn list(
+    State(state): State<AppState>,
+    AppGarde(AppForm(query)): AppGarde<AppForm<ListUsersQuery>>,
+) -> Result<AppJson<Vec<User>>, Error> {
+    let mut conn = state.db.acquire().await?;
+
+    let users = sqlx::query_as::<_, UserRow>(
         r#"
-        SELECT id AS player_id, short_id, display_name, rating, deviation, rating_extra
-        FROM player
-        WHERE public_key = $1
+        SELECT *
+        FROM user u, profile p
+        WHERE
+            p.parent_id = u.id
+            AND ($2 IS NULL OR p.public_key = $2)
+        ORDER BY ordinal DESC
+        LIMIT $1
         "#,
     )
-    .bind(request.public_key.as_str())
-    .fetch_optional(&mut *tx)
-    .await?;
+    .bind(query.count)
+    .bind(query.public_key.as_ref().map(|s| s.as_str()))
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|u| User::from(u))
+    .collect::<Vec<_>>();
 
-    if let Some(mut player) = player_query {
-        let rating = if !model.ratings_enabled() {
-            None
-        } else if let Some((rating, deviation)) = player.rating.zip(player.deviation) {
-            let rating = RawRating {
-                player_id: player.id,
-                rating,
-                deviation,
-                extra: player.extra,
-            };
+    Ok(AppJson(users))
+}
 
-            Some(Rating::<T::Data>::try_from(rating).map_err(Error::new)?)
-        } else {
-            None
-        };
+/// Shows the currently authenticated user's details.
+pub async fn show_self(
+    mut user: SessionUser,
+    State(state): State<AppState>,
+) -> Result<AppJson<CurrentUser>, Error> {
+    let mut conn = state.db.acquire().await?;
 
-        // a player exists already, we just need to update them
-        if player.display_name != request.display_name {
-            sqlx::query(
-                r#"
-                UPDATE player
-                SET display_name = $1, updated_at = $3
-                WHERE short_id = $2
-                "#,
-            )
-            .bind(&request.display_name)
-            .bind(&player.short_id)
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
+    // The authenticated user can see their profiles
+    preload_profiles(&mut user, &mut *conn).await?;
+    Ok(AppJson(user.into_inner()))
+}
 
-            player.display_name = request.display_name.clone();
-        }
-
-        tx.commit().await?;
-
-        // return result
-        Ok((
-            StatusCode::CREATED,
-            AppJson(Player {
-                id: player.short_id,
-                mmr: rating.map(|rating| rating.ordinal() as i32),
-                display_name: player.display_name,
-                public_key: Some(request.public_key),
-            }),
-        ))
-    } else {
-        // this is a new player
-        let player = create_player(&request.public_key, &request.display_name, &mut *tx).await?;
-
-        let rating = if model.ratings_enabled() {
-            // Add a historic rating for glicko2 to work
-            Some(init_rating(player.id, &model, &mut *tx).await?)
-        } else {
-            None
-        };
-
-        tx.commit().await?;
-
-        Ok((
-            StatusCode::CREATED,
-            AppJson(Player {
-                id: player.short_id,
-                mmr: rating.map(|rating| rating.ordinal() as i32),
-                display_name: player.display_name,
-                public_key: Some(request.public_key),
-            }),
-        ))
+/// Shows information about a specific user.
+pub async fn show(
+    Path((short_id,)): Path<(String,)>,
+    State(state): State<AppState>,
+) -> Result<AppJson<User>, Error> {
+    let mut conn = state.db.acquire().await?;
+    match get_user_by_short_id(&short_id, &mut *conn).await? {
+        Some(user) => Ok(AppJson(User::from(user))),
+        None => Err(Error::not_found(format!(
+            "user w/ id {} not found",
+            short_id
+        ))),
     }
 }

@@ -7,9 +7,9 @@ use axum::{
 
 use cookie::{Cookie, SameSite};
 
-use derive_more::Deref;
+use derive_more::{Deref, DerefMut};
 
-use ring_channel_model::{User, user::UserFlags};
+use duelchannel_model::{CurrentUser, user::UserFlags};
 
 use sqlx::FromRow;
 
@@ -33,6 +33,7 @@ use tower_sessions::Session as TowerSession;
 use crate::{
     app::AppState,
     error::{Error, ErrorKind},
+    schema::user::get_user,
 };
 
 pub type SessionError = tower_sessions::session::Error;
@@ -159,16 +160,17 @@ where
 ///
 /// This type dereferences into the stored user [`User`], which stores basic
 /// information about the user that is typically suitable for most endpoints.
-#[derive(Clone, Debug, Deref)]
+#[derive(Clone, Debug, Deref, DerefMut)]
 pub struct SessionUser {
     #[deref]
-    user: User,
+    #[deref_mut]
+    user: CurrentUser,
     identity: i32,
 }
 
 impl SessionUser {
     /// Unwraps the inner user model.
-    pub fn into_inner(self) -> User {
+    pub fn into_inner(self) -> CurrentUser {
         self.user
     }
 
@@ -206,34 +208,12 @@ where
         let state = AppState::from_ref(state);
 
         if let Some(identity) = session.identity {
-            // fetch identity
-            let user = sqlx::query_as::<_, UserQuery>(
-                r#"
-                SELECT
-                    username, avatar, display_name, mobiums, mobiums_gained,
-                    mobiums_lost, flags
-                FROM
-                    user
-                WHERE
-                    id = $1
-                    AND username IS NOT NULL
-                "#,
-            )
-            .bind(identity)
-            .fetch_optional(&state.db)
-            .await?;
+            let mut conn = state.db.acquire().await?;
+            let user = get_user(identity, &mut *conn).await?;
 
             if let Some(user) = user {
                 Ok(SessionUser {
-                    user: User {
-                        username: user.username,
-                        avatar: user.avatar,
-                        display_name: user.display_name,
-                        mobiums: user.mobiums,
-                        mobiums_gained: user.mobiums_gained,
-                        mobiums_lost: user.mobiums_lost,
-                        flags: user.flags,
-                    },
+                    user: CurrentUser::from(user),
                     identity,
                 })
             } else {
