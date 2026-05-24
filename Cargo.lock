@@ -959,6 +959,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "duelchannel-client"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "duelchannel-model",
+ "reqwest 0.13.3",
+ "serde",
+]
+
+[[package]]
 name = "duelchannel-model"
 version = "0.1.0"
 dependencies = [
@@ -2973,8 +2983,10 @@ checksum = "62e0021ea2c22aed41653bc7e1419abb2c97e038ff2c33d0e1309e49a97deec0"
 dependencies = [
  "base64",
  "bytes",
+ "encoding_rs",
  "futures-core",
  "futures-util",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
@@ -2983,12 +2995,16 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

@@ -1,0 +1,11 @@
+[package]
+name = "duelchannel-client"
+version = "0.1.0"
+authors = ["Dante Helmore <frostu8@protonmail.com>"]
+edition.workspace = true
+
+[dependencies]
+duelchannel-model = { workspace = true }
+derive_more = { workspace = true, features = ["display", "from"] }
+reqwest = { version = "0.13.3", features = ["json", "query"] }
+serde = { workspace = true, features = ["derive"] }
