@@ -9,9 +9,7 @@ use cookie::{Cookie, SameSite};
 
 use derive_more::{Deref, DerefMut};
 
-use duelchannel_model::{CurrentUser, user::UserFlags};
-
-use sqlx::FromRow;
+use duelchannel_model::CurrentUser;
 
 use time::Duration;
 

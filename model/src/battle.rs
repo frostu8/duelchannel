@@ -36,11 +36,6 @@ pub struct Battle {
 /// A participant in a match.
 #[derive(Clone, Debug, Deref, Deserialize, Serialize)]
 pub struct Participant {
-    /// The user participating.
-    #[deref]
-    pub user: User,
-    /// The player's skin.
-    pub skin: Skin,
     /// The name of the player.
     pub name: String,
     /// The team they are on.
@@ -51,6 +46,13 @@ pub struct Participant {
     /// If the player no contest'd.
     #[serde(default)]
     pub no_contest: bool,
+    /// The player's skin.
+    ///
+    /// May not be present, for very old matches.
+    pub skin: Option<Skin>,
+    /// The user participating.
+    #[deref]
+    pub user: User,
 }
 
 /// The match's status.

@@ -5,9 +5,8 @@ use axum::{
     extract::{Path, State},
 };
 
-use ring_channel_model::{
-    Player,
-    battle::{BattleStatus, Participant, PlayerTeam},
+use duelchannel_model::{
+    battle::{BattleStatus, Participant},
     request::battle::UpdatePlayerPlacementRequest,
 };
 
@@ -21,7 +20,7 @@ use crate::{
     app::{AppJson, AppState, Model, Payload},
     auth::api_key::ServerAuthentication,
     error::{Error, ErrorKind},
-    player::mmr::{self, Rating, RawRating},
+    schema::{battle::get_participant_by_short_id, user::mmr},
 };
 
 /// Updates the placement of a player for a given match.
@@ -37,31 +36,16 @@ where
     T: mmr::Model + 'static,
 {
     #[derive(FromRow)]
-    struct BattleQuery {
+    struct BattleRow {
         id: i32,
         #[sqlx(try_from = "u8")]
         status: BattleStatus,
     }
 
-    #[derive(FromRow)]
-    struct ParticipantQuery {
-        id: Option<i32>,
-        player_id: i32,
-        team: Option<u8>,
-        no_contest: Option<bool>,
-        finish_time: Option<i32>,
-        skin: Option<String>,
-        kart_speed: Option<i32>,
-        kart_weight: Option<i32>,
-        display_name: String,
-        rating: Option<f32>,
-        deviation: Option<f32>,
-        #[sqlx(rename = "rating_extra")]
-        extra: Option<String>,
-    }
+    let mut tx = state.db.begin().await?;
 
     // find match first
-    let battle = sqlx::query_as::<_, BattleQuery>(
+    let battle = sqlx::query_as::<_, BattleRow>(
         r#"
         SELECT id, status
         FROM battle
@@ -69,7 +53,7 @@ where
         "#,
     )
     .bind(uuid.hyphenated().to_string())
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     let Some(battle) = battle else {
@@ -82,95 +66,33 @@ where
     }
 
     // find the battle participant
-    let participant = sqlx::query_as::<_, ParticipantQuery>(
-        r#"
-        SELECT
-            pt.*,
-            p.id AS player_id,
-            p.display_name,
-            p.rating,
-            p.deviation,
-            p.rating_extra
-        FROM
-            player p
-        LEFT OUTER JOIN
-            participant pt
-            ON pt.player_id = p.id
-        WHERE
-            p.short_id = $1
-            AND pt.match_id = $2
-        "#,
-    )
-    .bind(&short_id)
-    .bind(battle.id)
-    .fetch_optional(&state.db)
-    .await?;
-
-    let Some(participant) = participant else {
+    let participant = get_participant_by_short_id(battle.id, &short_id, &model, &mut *tx).await?;
+    let Some(mut participant) = participant else {
         // The player with that RRID does not exist.
         return Err(Error::not_found(format!(
-            "Player w/ id {} does not exist",
+            "player w/ id {} does not exist or not participating in match",
             short_id
         )));
     };
 
-    // Get non-nullables
-    let (Some(participant_id), Some(team), Some(no_contest)) =
-        (participant.id, participant.team, participant.no_contest)
-    else {
-        // the player is not participating!
-        return Err(Error::not_found(format!(
-            "Player {} not participating in match",
-            participant.display_name
-        )));
-    };
-
-    // Get other fields
-    let ParticipantQuery { finish_time, .. } = participant;
+    if let Some(finish_time) = request.finish_time {
+        participant.finish_time = Some(finish_time);
+    }
 
     // UPDATE THAT SHIT KAKAROT!
     sqlx::query(
         r#"
-        UPDATE
-            participant
-        SET
-            finish_time = IFNULL($2, finish_time)
-        WHERE
-            id = $1
+        UPDATE participant
+        SET finish_time = IFNULL($2, finish_time)
+        WHERE id = $1
         "#,
     )
-    .bind(participant_id)
+    .bind(participant.id)
     .bind(request.finish_time)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
-    let rating = if !model.ratings_enabled() {
-        None
-    } else if let Some((rating, deviation)) = participant.rating.zip(participant.deviation) {
-        let rating = RawRating {
-            player_id: participant.player_id,
-            rating,
-            deviation,
-            extra: participant.extra,
-        };
+    tx.commit().await?;
 
-        Some(Rating::<T::Data>::try_from(rating).map_err(Error::new)?)
-    } else {
-        None
-    };
-
-    Ok(AppJson(Participant {
-        player: Player {
-            id: short_id,
-            mmr: rating.map(|r| r.ordinal() as i32),
-            public_key: None,
-            display_name: participant.display_name,
-        },
-        team: PlayerTeam::try_from(team).map_err(Error::new)?,
-        finish_time: finish_time.or(request.finish_time),
-        no_contest,
-        skin: participant.skin,
-        kart_speed: participant.kart_speed,
-        kart_weight: participant.kart_weight,
-    }))
+    Ok(AppJson(participant.into()))
 }

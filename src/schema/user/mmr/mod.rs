@@ -323,17 +323,17 @@ where
     sqlx::query(
         r#"
         INSERT INTO rating
-            (user_id, period_id, rating, deviation, extra, inserted_at)
+            (inserted_at, updated_at, user_id, period_id, rating, deviation, extra)
         VALUES
-            ($1, $2, $3, $4, $5, $6)
+            ($1, $1, $2, $3, $4, $5, $6)
         "#,
     )
+    .bind(now)
     .bind(rating.user_id)
     .bind(period.id)
     .bind(rating.rating)
     .bind(rating.deviation)
     .bind(extra)
-    .bind(now)
     //.bind(period.started_at)
     .execute(&mut *conn)
     .await
@@ -341,15 +341,66 @@ where
     .map_err(Error::from)
 }
 
-/// Updates a player's current rating.
+pub async fn update_ratings<T>(
+    user_ids: &[i32],
+    model: &T,
+    conn: &mut SqliteConnection,
+) -> Result<Vec<Rating<T::Data>>, Error>
+where
+    T: Model + Debug,
+    T::Data: Debug,
+{
+    let now = Utc::now();
+    update_ratings_at(user_ids, model, now, conn).await
+}
+
+/// Updates player's ratings.
 ///
-/// Should be called when a match is finished.
+/// Should be called when a match is finished. This first makes sure that all
+/// the players are at the current rating period.
 ///
 /// Ensure both player's ratings exist (by calling [`get_rating`] for each of
 /// them) before calling this!
 #[instrument(skip(conn))]
-pub async fn update_rating<T>(
+pub async fn update_ratings_at<T>(
+    user_ids: &[i32],
+    model: &T,
+    time: DateTime<Utc>,
+    conn: &mut SqliteConnection,
+) -> Result<Vec<Rating<T::Data>>, Error>
+where
+    T: Model + Debug,
+    T::Data: Debug,
+{
+    let mut ratings = Vec::with_capacity(user_ids.len());
+    let mut period: Option<RatingPeriod> = None;
+
+    for user_id in user_ids.iter().copied() {
+        // Update players' rating
+        let current_period = next_rating_period_at(user_id, model, time, &mut *conn).await?;
+
+        // Get player's current rating
+        ratings.push(get_rating::<T>(user_id, &mut *conn).await?);
+        period = Some(current_period);
+    }
+
+    let Some(period) = period else {
+        // There are no ratings to process
+        assert!(ratings.len() == 0);
+        return Ok(vec![]);
+    };
+
+    let mut out = Vec::with_capacity(ratings.len());
+    for rating in ratings {
+        out.push(update_one_rating(&rating, &period, model, &mut *conn).await?);
+    }
+
+    Ok(out)
+}
+
+async fn update_one_rating<T>(
     rating: &RatingRecord<T::Data>,
+    period: &RatingPeriod,
     model: &T,
     conn: &mut SqliteConnection,
 ) -> Result<Rating<T::Data>, Error>
@@ -357,24 +408,23 @@ where
     T: Model + Debug,
     T::Data: Debug,
 {
-    let now = Utc::now();
-
-    // Get the current period start
-    let period = next_rating_period_at(rating.user_id, model, now, &mut *conn).await?;
     let ends_at = period.started_at + model.period();
 
     let matchups = fetch_matchups(rating.user_id, period.started_at, ends_at, &mut *conn).await?;
 
     // Get the player's new rating
-    let new_rating = model.rate(rating, &matchups, period.period_elapsed).await?;
+    let new_rating = model
+        .rate(&rating, &matchups, period.period_elapsed)
+        .await?;
 
     // Cap deviation at certain value
     // TODO: move this into the glicko2 mod
     //new_rating.deviation = f32::min(new_rating.deviation, config.defaults.deviation);
 
-    tracing::debug!(?new_rating, "updating rating for");
+    tracing::debug!(?rating, ?new_rating, "updating rating for");
 
     // Update the cached ordinal
+    let now = Utc::now();
     sqlx::query(
         r#"
         UPDATE user
@@ -416,7 +466,7 @@ where
 pub async fn next_rating_period_at<T>(
     user_id: i32,
     model: &T,
-    now: DateTime<Utc>,
+    time: DateTime<Utc>,
     conn: &mut SqliteConnection,
 ) -> Result<RatingPeriod, Error>
 where
@@ -446,7 +496,7 @@ where
             RETURNING id, inserted_at
             "#,
         )
-        .bind(now)
+        .bind(time)
         .fetch_one(&mut *conn)
         .await?;
 
@@ -455,8 +505,8 @@ where
         return Ok(period);
     };
 
-    // Fetch logged periods
-    let mut next_periods = sqlx::query_as::<_, RatingPeriod>(
+    // Fast-forward logged periods
+    let ff = sqlx::query_as::<_, RatingPeriod>(
         r#"
         SELECT *
         FROM rating_period
@@ -468,54 +518,78 @@ where
     .fetch_all(&mut *conn)
     .await?;
 
+    for next_period in ff {
+        let started_at = period.started_at;
+        let ended_at = next_period.started_at;
+
+        // Get player rating
+        let player = get_rating::<T>(user_id, &mut *conn).await?;
+
+        // All players get their rating rolled over if they had one.
+        // Fetch the player's matchups
+        let matchups = fetch_matchups(player.user_id, started_at, ended_at, &mut *conn).await?;
+
+        // Get the player's new rating
+        // Since this period is completed, the period elapsed is always 1.0
+        let new_rating = model.rate(&player, &matchups, 1.0).await?;
+
+        let now = Utc::now();
+
+        // Update the player's existing rating
+        sqlx::query(
+            r#"
+            UPDATE user
+            SET ordinal = $3, updated_at = $2
+            WHERE id = $1
+            "#,
+        )
+        .bind(now)
+        .bind(player.user_id)
+        .bind(new_rating.ordinal() as i32)
+        .execute(&mut *conn)
+        .await?;
+
+        // Insert it into the rating period
+        catalog_rating(&next_period, &new_rating, &mut *conn).await?;
+
+        // Update old period
+        period = next_period;
+    }
+
+    // Now, period is the most recent in the database, but check if we need to
+    // close future periods.
+
     // Close any pending periods
-    let delta = now - period.started_at;
+    let delta = time - period.started_at;
     let mut elapsed_periods = delta.as_seconds_f32() / model.period().as_seconds_f32();
 
     period.period_elapsed = f32::min(elapsed_periods, 1.0);
 
     while elapsed_periods >= 1.0 {
         let ended_at = period.started_at + model.period();
-        let mut new_period = match next_periods.pop() {
-            Some(period) => period,
-            None => {
-                // No more periods, insert a new one.
-                tracing::debug!(
-                    ?period,
-                    "closing rating period {} - {}",
-                    period.started_at,
-                    ended_at
-                );
 
-                // Insert a new period into the database
-                sqlx::query_as::<_, RatingPeriod>(
-                    r#"
-                    INSERT INTO rating_period (inserted_at)
-                    VALUES ($1)
-                    RETURNING id, inserted_at
-                    "#,
-                )
-                .bind(ended_at)
-                .fetch_one(&mut *conn)
-                .await?
-            }
-        };
+        tracing::debug!(
+            ?period,
+            "closing rating period {} - {}",
+            period.started_at,
+            ended_at
+        );
+
+        // Insert a new period into the database
+        let mut new_period = sqlx::query_as::<_, RatingPeriod>(
+            r#"
+            INSERT INTO rating_period (inserted_at)
+            VALUES ($1)
+            RETURNING id, inserted_at
+            "#,
+        )
+        .bind(ended_at)
+        .fetch_one(&mut *conn)
+        .await?;
         new_period.period_elapsed = f32::min(elapsed_periods, 1.0);
 
         // Get player rating
-        let player = sqlx::query_as::<_, RatingRow>(
-            r#"
-            SELECT r.*
-            FROM rating r
-            WHERE r.user_id = $1
-            ORDER BY inserted_at DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(user_id)
-        .fetch_one(&mut *conn)
-        .await?;
-        let player = RatingRecord::<T::Data>::try_from(player).map_err(Error::new)?;
+        let player = get_rating::<T>(user_id, &mut *conn).await?;
 
         // All players get their rating rolled over if they had one.
         // Fetch the player's matchups
@@ -552,6 +626,29 @@ where
     }
 
     Ok(period)
+}
+
+/// Gets a player's last historical record
+pub async fn get_rating<T>(
+    user_id: i32,
+    conn: &mut SqliteConnection,
+) -> Result<RatingRecord<T::Data>, Error>
+where
+    T: Model,
+{
+    let rating = sqlx::query_as::<_, RatingRow>(
+        r#"
+        SELECT r.*
+        FROM rating r
+        WHERE r.user_id = $1
+        ORDER BY inserted_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    RatingRecord::<T::Data>::try_from(rating).map_err(Error::new)
 }
 
 #[instrument(skip(conn))]
@@ -690,9 +787,9 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use uuid::Uuid;
 
-    use crate::{
+    use crate::schema::{
         battle::update_participant_ratings,
-        schema::user::{create_player, get_player, mmr::openskill::OpenSkillData},
+        user::{UserBuilder, get_user, mmr::openskill::OpenSkillData},
     };
 
     use super::*;
@@ -710,20 +807,14 @@ mod tests {
             .expect("valid openskill model");
 
         // Create players
-        let player1 = create_player(
-            &Rrid::new("26ABFC4C5960182E8FE20203A1634E9ECB42BBFCCF8CE2965306213E5C75E921").unwrap(),
-            "Metal Sonic",
-            &mut *conn,
-        )
-        .await
-        .unwrap();
-        let player2 = create_player(
-            &Rrid::new("384F5460E7C95047245E92E7249AF019FB5215A7ABED748CF25FB1EA24B39443").unwrap(),
-            "Phil's Pills",
-            &mut *conn,
-        )
-        .await
-        .unwrap();
+        let player1 = UserBuilder::new("Metal Sonic")
+            .create(&mut *conn)
+            .await
+            .unwrap();
+        let player2 = UserBuilder::new("Phil's Pills")
+            .create(&mut *conn)
+            .await
+            .unwrap();
 
         // Create ratings
         init_rating(player1.id, &model, &mut *conn)

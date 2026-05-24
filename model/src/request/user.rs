@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use serde_with::skip_serializing_none;
 
-use crate::Rrid;
+use crate::rrid::Rrid;
 
 /// A query for the list users endpoint.
 #[derive(Deserialize, Debug, Default, Serialize)]

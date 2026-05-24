@@ -76,7 +76,7 @@ where
         )
         .bind(now)
         .bind(row.id)
-        .bind(profile.public_key.as_str())
+        .bind(profile.public_key.as_bytes())
         .execute(&mut *tx)
         .await;
 
@@ -125,7 +125,7 @@ pub async fn list(
         "#,
     )
     .bind(query.count)
-    .bind(query.public_key.as_ref().map(|s| s.as_str()))
+    .bind(query.public_key.as_ref().map(|s| s.as_bytes()))
     .fetch_all(&mut *conn)
     .await?
     .into_iter()

@@ -199,6 +199,26 @@ pub async fn get_user_by_short_id(
     .map_err(Error::new)
 }
 
+/// Gets a user from the database by a profile public key
+pub async fn get_user_by_public_key(
+    public_key: &Rrid,
+    conn: &mut SqliteConnection,
+) -> Result<Option<UserRow>, Error> {
+    sqlx::query_as::<_, UserRow>(
+        r#"
+        SELECT u.*
+        FROM user u, profile pr
+        WHERE
+            pr.public_key = $1
+            AND u.id = pr.parent_id
+        "#,
+    )
+    .bind(public_key.as_bytes())
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(Error::new)
+}
+
 #[derive(FromRow)]
 struct ProfileRow {
     #[sqlx(try_from = "String")]

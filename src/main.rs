@@ -14,7 +14,7 @@ use axum::{
     extract::{MatchedPath, Request},
     middleware::{Next, from_fn},
     response::{IntoResponse, Response},
-    routing::{get, patch, post, put},
+    routing::{get, patch, post},
 };
 
 use axum_server::Handle;
@@ -175,7 +175,7 @@ where
                     .await?;
 
                 // update all players ratings
-                let player_ids = sqlx::query_as::<_, (i32,)>("SELECT id FROM player")
+                let player_ids = sqlx::query_as::<_, (i32,)>("SELECT id FROM user")
                     .fetch_all(&mut *tx)
                     .await?;
 
@@ -264,30 +264,26 @@ where
         //         .route("/{player_id}", get(routes::player::show::<T>)),
         // )
         // .nest(
-        //     "/matches",
-        //     Router::<AppState>::new()
-        //         .route("/", get(routes::battle::list::<T>))
-        //         .route("/", post(routes::battle::create::<T>))
-        //         .nest(
-        //             "/{battle_id}",
-        //             Router::<AppState>::new()
-        //                 .route("/", get(routes::battle::show::<T>))
-        //                 .route("/", patch(routes::battle::update::<T>))
-        //                 .route(
-        //                     "/players/{short_id}",
-        //                     patch(routes::battle::player::update::<T>),
-        //                 )
-        //                 .route("/replay", post(routes::battle::replay::upload::<T>))
-        //                 .route("/wagers", get(routes::battle::wager::list))
-        //                 .route("/wagers/~me", get(routes::battle::wager::show_self))
-        //                 .route("/wagers/~me", put(routes::battle::wager::create))
-        //                 .route("/wagers/{username}", get(routes::battle::wager::show)),
-        //         ),
-        // )
-        // .nest(
         //     "/chat",
         //     Router::<AppState>::new().route("/messages", post(routes::chat::create::<T>)),
         // )
+        .nest(
+            "/matches",
+            Router::<AppState>::new()
+                .route("/", get(routes::battle::list::<T>))
+                .route("/", post(routes::battle::create))
+                .nest(
+                    "/{battle_id}",
+                    Router::<AppState>::new()
+                        .route("/", get(routes::battle::show::<T>))
+                        .route("/", patch(routes::battle::update::<T>))
+                        .route(
+                            "/players/{short_id}",
+                            patch(routes::battle::player::update::<T>),
+                        )
+                        .route("/replay", post(routes::battle::replay::upload::<T>)),
+                ),
+        )
         .nest(
             "/servers",
             Router::<AppState>::new()

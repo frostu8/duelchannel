@@ -54,6 +54,45 @@ components:
                 type: string
                 description: The player's 64-length "RRID."
                 pattern: '^[\dA-Fa-f]{64}$'
+    CreateMatch:
+      type: object
+      required:
+        - level_name
+        - participants
+      properties:
+        level_name:
+          type: string
+          description: The name of the level the battle is taking place on.
+        participants:
+          type: array
+          description: The players to register to the battle
+          items:
+            $ref: "#/components/schemas/CreateMatchParticipant"
+    CreateMatchParticipant:
+      type: object
+      required:
+        - user_id
+        - public_key
+        - name
+        - team
+        - skin
+      properties:
+        user_id:
+          type: string
+          description: The player's short ID.
+          pattern: '^[\dA-Z]{6}$'
+        public_key:
+          type: string
+          description: The player's 64-length "RRID."
+          pattern: '^[\dA-Fa-f]{64}$'
+        name:
+          type: string
+          description: The player's display name at the time of creation.
+        team:
+          type: integer
+          description: The team the player is on.
+        skin:
+          $ref: "#/components/schemas/Skin"
     CurrentUser:
       allOf:
         - $ref: "#/components/schemas/User"
@@ -66,6 +105,112 @@ components:
           type: string
           description: The player's 64-length "RRID."
           pattern: '^[\dA-Fa-f]{64}$'
+    Participant:
+      type: object
+      required:
+        - user
+        - skin
+        - name
+        - team
+        - no_contest
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        skin:
+          $ref: "#/components/schemas/Skin"
+        name:
+          type: string
+          description: >
+            The display name of the user at match creation.
+        team:
+          type: integer
+          description: The team number the player is on.
+        no_contest:
+          type: boolean
+          description: >
+            Whether or not the player was allowed to finish.
+
+            A `true` `no_contest` means that the player was absolutely not
+            allowed to finish, but a `false` `no_contest` does not imply
+            the opposite; that is, the player was able to finish. A set
+            `finish_time` will let you know if the player did finish.
+        finish_time:
+          type: integer
+          description: The finish time of the player, in game tics.
+    Match:
+      type: object
+      required:
+        - id
+        - level_name
+        - status
+        - margin_score
+        - replay_url
+        - started_at
+        - participants
+      properties:
+        id:
+          type: string
+          description: The match UUID.
+          pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
+        level_name:
+          type: string
+          description: The name of the level the match was played on.
+        status:
+          $ref: "#/components/schemas/MatchStatus"
+        margin_score:
+          type: integer
+          description: >
+            The amount of checkpoints crossed in overtime.
+
+            When a checkpoint is crossed in overtime, it increases the max
+            speed of players.
+        replay_url:
+          type: string
+          nullable: true
+          description: Where the replay can be downloaded from.
+          format: uri
+        started_at:
+          type: string
+          description: When the match started.
+          format: date-time
+        participants:
+          type: array
+          description: A list of participants in the match.
+          items:
+            $ref: "#/components/schemas/Participant"
+    MatchStatus:
+      type: integer
+      description: >
+        The status of a match.
+
+        * `0` **Ongoing**  
+          The match is still running.
+        * `1` **Concluded**  
+          The match has ended.
+        * `2` **Cancelled**  
+          The match ended abnormally, either through the opponent leaving,
+          anti-grief, or whatnot.
+      enum: [0, 1, 2]
+    Skin:
+      type: object
+      required:
+        - name
+        - real_name
+        - kart_speed
+        - kart_weight
+      properties:
+        name:
+          type: string
+          description: The internal name of the skin.
+        real_name:
+          type: string
+          description: The full display name of the skin.
+        kart_speed:
+          type: integer
+          description: The kart speed.
+        kart_weight:
+          type: integer
+          description: The kart weight.
     User:
       type: object
       required:
@@ -111,6 +256,24 @@ components:
         Channel beta period. |
         | `1 << 2` | The player has broken an MMR threshold at a certain
         point. |
+    UpdatePlayerPlacement:
+      type: object
+      properties:
+        finish_time:
+          type: integer
+          description: The finish time of the player.
+    UpdateMatch:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/MatchStatus"
+        margin_score:
+          type: integer
+          description: >
+            The amount of checkpoints crossed in overtime.
+
+            When a checkpoint is crossed in overtime, it increases the max
+            speed of players.
     Error:
       type: object
       description: >
@@ -122,6 +285,64 @@ components:
           type: string
           description: A description of the error.
   examples:
+    apiKeyUnauthenticatedExample:
+      value:
+        message: No API key passed; set an X-API-Key header!
+    matchExample:
+      value:
+        id: 18e0b086-5557-4245-877d-19729bf6d4bd
+        level_name: Robotnik Coaster
+        status: 1
+        margin_score: 1
+        replay_url: https://replays.ringrace.rs/4030b9cbe9f6ae5f1df441df0b0ed98f4c518d0836e837357730eeedda20b4e2/1779650470-angel-island-zone-duel-channel-beta.lmp
+        started_at: 2025-10-27T08:25:37.318613303Z
+        participants:
+          - user:
+              id: GJBIJK
+              display_name: Dr. Robotnik
+              avatar_url: null
+              mmr: 2023
+              flags: 2
+            skin:
+              name: eggman
+              real_name: Eggman
+              kart_speed: 2
+              kart_weight: 8
+            name: Dr. Robotnik
+            team: 0
+            finish_time: 36149
+            no_contest: false
+          - user:
+              id: 4ZWBUO
+              display_name: Tails
+              avatar_url: null
+              mmr: 1983
+              flags: 2
+            skin:
+              name: tails
+              real_name: Tails
+              kart_speed: 2
+              kart_weight: 2
+            name: BailsTheFox
+            team: 1
+            no_contest: true
+    participantExample:
+      value:
+        user:
+          id: GJBIJK
+          display_name: Dr. Robotnik
+          avatar_url: null
+          mmr: 2023
+          flags: 2
+        skin:
+          name: eggman
+          real_name: Eggman
+          kart_speed: 2
+          kart_weight: 8
+        name: Dr. Robotnik
+        team: 0
+        finish_time: 36149
+        no_contest: false
     userExample:
       value:
         id: GJBIJK
@@ -131,6 +352,297 @@ components:
         flags: 4
 
 paths:
+  /matches:
+    get:
+      tags:
+        - match
+      summary: List Matches
+      description: >
+        Fetches all the matches that have taken place.
+      security: []
+      operationId: list_all_matches
+      parameters:
+        - name: count
+          in: query
+          description: How many results to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            example: 50
+        - name: before
+          in: query
+          description: Get matches before this time
+          schema:
+            type: string
+            example: 2025-10-27T06:53:21.694619841Z
+            format: date-time
+        - name: after
+          in: query
+          description: Get matches after this time
+          schema:
+            type: string
+            example: 2025-10-27T06:53:21.694619841Z
+            format: date-time
+      responses:
+        "200":
+          description: A list of matches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Match"
+        "400":
+          description: >
+            A bad count was given, or before or after was a malformed datetime.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - match
+      summary: Create Match
+      description: >
+        Given the specifications of the match, starts a new match.
+      security:
+        - apiKey: []
+      operationId: create_match
+      requestBody:
+        description: The match setup details.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMatch"
+            example:
+              level_name: Robotnik Coaster
+              participants:
+                - user_id: GJBIJK
+                  public_key: DA8EFA1274A90E22FE7B56C0524898586D128917F9108FF0C9025E44B519AC01
+                  name: Cat Girl Enthusiast
+                  team: 0
+                  skin:
+                    name: aigis
+                    real_name: Aigis
+                    kart_speed: 6
+                    kart_weight: 7
+                - user_id: 4ZWBU0
+                  public_key: 1B633CB12CF0C91554C938708F49A77FFB9B4C023D63D29373511222C9B04ECD
+                  name: napwack
+                  team: 1
+                  skin:
+                    name: knuckles
+                    real_name: Knuckles
+                    kart_speed: 5
+                    kart_weight: 5
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/CreateMatch"
+      responses:
+        "201":
+          description: The created match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Match"
+        "400":
+          description: >
+            A participant was added to the match that does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Client is unauthenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                apiKeyUnauthenticatedExample:
+                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
+  /matches/{match_id}:
+    get:
+      tags:
+        - match
+      summary: Fetch Match
+      description: >
+        Fetches a passed or ongoing match.
+      security: []
+      operationId: fetch_match
+      parameters:
+        - name: match_id
+          in: path
+          description: Match UUID
+          required: true
+          schema:
+            type: string
+            example: 18e0b086-5557-4245-877d-19729bf6d4bd
+            pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
+      responses:
+        "200":
+          description: The updated match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Match"
+              examples:
+                matchExample:
+                  $ref: "#/components/examples/matchExample"
+        "404":
+          description: >
+            Requested match does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    patch:
+      tags:
+        - match
+      summary: Modify Match
+      description: >
+        **This endpoint cannot modify concluded matches.** When matches are
+        concluded through this endpoint, they are locked.
+      security:
+        - apiKey: []
+      operationId: modify_match
+      parameters:
+        - name: match_id
+          in: path
+          description: Match UUID
+          required: true
+          schema:
+            type: string
+            example: 18e0b086-5557-4245-877d-19729bf6d4bd
+            pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
+      requestBody:
+        description: The properties to update about the match.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMatch"
+            example:
+              status: 1
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/UpdateMatch"
+      responses:
+        "200":
+          description: The updated match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Match"
+              examples:
+                matchExample:
+                  $ref: "#/components/examples/matchExample"
+        "400":
+          description: >
+            Attempted to modify an already concluded match.
+
+            If the match has its `status` to **Concluded** or **Cancelled**, it
+            is protected from updates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Client is unauthenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                apiKeyUnauthenticatedExample:
+                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
+        "404":
+          description: >
+            Requested match does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /matches/{match_id}/players/{player_id}:
+    patch:
+      tags:
+        - match
+      summary: Modify Player Placement
+      description: >
+        This endpoint should be invoked when players exit levels; i.e. they
+        finish with a finish time.
+
+        If the match is concluded, you will be unable to update a player's
+        placements. The only way to set a `no_contest` value is by concluding
+        the match without updating the player's placement.
+      security:
+        - apiKey: []
+      operationId: modify_player_placement
+      parameters:
+        - name: match_id
+          in: path
+          description: Match UUID
+          required: true
+          schema:
+            type: string
+            example: 18e0b086-5557-4245-877d-19729bf6d4bd
+            pattern: '^[\dA-Fa-f]{8}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{4}-[\dA-Fa-f]{12}$'
+        - name: player_id
+          in: path
+          description: Player ID
+          required: true
+          schema:
+            type: string
+            example: GJBIJK
+            pattern: '^[\dA-Z]{6}$'
+      requestBody:
+        description: The new player's placement information.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePlayerPlacement"
+            example:
+              finish_time: 36149
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/UpdatePlayerPlacement"
+      responses:
+        "200":
+          description: The updated participant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Participant"
+              examples:
+                participantExample:
+                  $ref: "#/components/examples/participantExample"
+        "400":
+          description: >
+            Attempted to modify an already concluded match.
+
+            If the match has its `status` to **Concluded** or **Cancelled**, it
+            is protected from updates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Client is unauthenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                apiKeyUnauthenticatedExample:
+                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
+        "404":
+          description: >
+            The match does not exist, the player does not exist, or the player
+            is not participating in this match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /players:
     get:
       tags:

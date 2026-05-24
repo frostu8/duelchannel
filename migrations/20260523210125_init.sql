@@ -88,7 +88,7 @@ CREATE TABLE profile (
     -- The parent user ID of the profile.
     parent_id INTEGER NOT NULL REFERENCES user(id),
     -- The public key of their profile.
-    public_key CHAR(64) NOT NULL UNIQUE,
+    public_key BINARY(32) NOT NULL UNIQUE,
     inserted_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
@@ -97,7 +97,7 @@ CREATE TABLE profile (
 CREATE TABLE battle (
     id INTEGER PRIMARY KEY,
     -- The server the battle took place on.
-    server_id INTEGER NOT NULL REFERENCES server(id),
+    server_id INTEGER REFERENCES server(id),
     -- The unique identiifer of the battle.
     uuid CHAR(36) NOT NULL UNIQUE,
     -- The name of the level of the battle.

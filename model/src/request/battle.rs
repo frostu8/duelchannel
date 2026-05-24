@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     battle::{BattleStatus, PlayerTeam},
-    profile::Skin,
+    profile::{Rrid, Skin},
 };
 
 /// Request to create a match.
@@ -14,18 +14,17 @@ pub struct CreateBattleRequest {
     pub level_name: String,
     /// The players to register for this battle.
     pub participants: Vec<CreateBattleParticipant>,
-    /// How long bets should last for, in seconds.
-    ///
-    /// Uses `20` seconds as the default.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bet_time: Option<i64>,
 }
 
 /// A participant in a [`CreateBattleRequest`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreateBattleParticipant {
     /// The short ID of the participant.
-    pub id: String,
+    pub user_id: String,
+    /// The public key of the participant.
+    pub public_key: Rrid,
+    /// The player's display name at the time of match creation.
+    pub name: String,
     /// What team they are on.
     pub team: PlayerTeam,
     /// The player's skin.

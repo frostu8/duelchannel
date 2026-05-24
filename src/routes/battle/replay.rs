@@ -10,7 +10,7 @@ use axum::{
 use bytes::Bytes;
 use futures_util::StreamExt as _;
 
-use ring_channel_model::Battle;
+use duelchannel_model::Battle;
 
 use sha2::{Digest as _, Sha256};
 
@@ -19,10 +19,12 @@ use uuid::Uuid;
 use crate::{
     app::{AppJson, AppState, Model},
     auth::api_key::ServerAuthentication,
-    battle::{BattleRow, get_replay_url, preload_participants},
     error::{Error, ErrorKind},
     multipart::Multipart,
-    player::mmr,
+    schema::{
+        battle::{BattleRow, get_replay_url, preload_participants},
+        user::mmr,
+    },
 };
 
 const MAX_REPLAY_SIZE: usize = 1024 * 1024 * 4;

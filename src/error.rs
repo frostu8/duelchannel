@@ -19,7 +19,7 @@ use derive_more::{Display, From};
 
 use http::StatusCode;
 
-use duelchannel_model::{ApiError, Rrid};
+use duelchannel_model::{ApiError, rrid::Rrid};
 
 use uuid::Uuid;
 
@@ -212,6 +212,13 @@ impl Error {
                 },
             ),
             ErrorKind::InvalidData(message) => (StatusCode::BAD_REQUEST, ApiError { message }),
+            // Area for errors we are ok with just using their display impl
+            err @ ErrorKind::DuplicateParticipant(_) => (
+                StatusCode::BAD_REQUEST,
+                ApiError {
+                    message: err.to_string(),
+                },
+            ),
             // fallthrough for internal server errors not turned into user
             // errors here
             _error_kind => (
@@ -297,13 +304,23 @@ pub enum ErrorKind {
     #[display("Battle {_0} concluded")]
     #[from(ignore)]
     AlreadyConcluded(Uuid),
-    /// A battle was attempted to be started with a bad participant.
-    #[display("Participant {_0} not found")]
-    MissingParticipant(String),
     /// A user was attempted to be created with a profile that is already in
     /// use.
-    #[display("Profile {_0} already used")]
+    #[display("profile {_0} already used")]
+    #[from(ignore)]
     ProfileInUse(Rrid),
+    /// A battle was attempted to be started with a bad participant.
+    #[display("participant {_0} not found")]
+    #[from(ignore)]
+    MissingParticipant(String),
+    /// A duplicate participant was attempted to be added.
+    #[display("participant {_0} used many times")]
+    #[from(ignore)]
+    DuplicateParticipant(String),
+    /// A battle was created with an unregistered profile.
+    #[display("profile {_0} not found")]
+    #[from(ignore)]
+    MissingProfile(Rrid),
     /// A content type was not provided.
     MissingContentType,
     /// The server cannot serve this content type.

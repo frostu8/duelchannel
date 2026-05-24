@@ -1,26 +1,22 @@
 //! Battle functions and utilities.
 
-use std::{
-    cmp::{max, min},
-    fmt::Debug,
-};
+use std::fmt::Debug;
 
 use chrono::{DateTime, Utc};
 
-use ring_channel_model::{
-    Battle, Player,
-    battle::{BattleStatus, Participant, PlayerTeam},
-    message::server::MobiumsChange,
-    user::UserFlags,
+use duelchannel_model::{
+    battle::{Battle, BattleStatus, Participant, PlayerTeam},
+    profile::Skin,
+    user::{User, UserFlags},
 };
 
 use sqlx::{FromRow, SqliteConnection};
 
 use crate::{
+    app,
     config::Config,
     error::Error,
-    player::mmr::{Model, Rating, RatingRecord, RawRating, RawRatingRecord, update_rating},
-    room::Room,
+    schema::user::mmr::{Model, update_ratings},
 };
 
 /// A schema for battles stored in database.
@@ -29,6 +25,7 @@ use crate::{
 #[derive(Clone, Debug, FromRow)]
 pub struct BattleRow {
     pub id: i32,
+    pub server_id: i32,
     pub uuid: String,
     pub level_name: String,
     #[sqlx(try_from = "u8")]
@@ -36,8 +33,9 @@ pub struct BattleRow {
     pub margin_score: i32,
     pub replay_hash: Option<String>,
     pub replay_filename: Option<String>,
+    pub concluded_at: Option<DateTime<Utc>>,
     pub inserted_at: DateTime<Utc>,
-    pub closed_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl From<BattleRow> for Battle {
@@ -48,9 +46,6 @@ impl From<BattleRow> for Battle {
 
 impl From<&BattleRow> for Battle {
     fn from(value: &BattleRow) -> Self {
-        let now = Utc::now();
-        let accepting_bets = now < value.closed_at;
-
         Battle {
             id: value.uuid.clone(),
             level_name: value.level_name.clone(),
@@ -59,12 +54,6 @@ impl From<&BattleRow> for Battle {
             margin_score: value.margin_score,
             replay_url: None,
             started_at: value.inserted_at,
-            accepting_bets,
-            closes_in: if accepting_bets {
-                Some((value.closed_at - now).abs().num_milliseconds())
-            } else {
-                None
-            },
         }
     }
 }
@@ -79,206 +68,27 @@ where
     T: Model + Debug,
     T::Data: Debug,
 {
-    // update ratings for all players
-    let ratings = sqlx::query_as::<_, RawRatingRecord>(
+    // Fetch players
+    let players = sqlx::query_as::<_, (i32,)>(
         r#"
-        SELECT r.*, pl.id
-        FROM participant p, player pl, rating r
-        WHERE
-            p.player_id = pl.id
-            AND r.player_id = pl.id
-            AND p.match_id = $1
-            AND r.id IN (
-                SELECT id
-                FROM rating
-                WHERE player_id = pl.id
-                ORDER BY inserted_at DESC
-                LIMIT 1
-            )
+        SELECT user_id
+        FROM participant p
+        WHERE p.match_id = $1
         "#,
     )
     .bind(battle_id)
     .fetch_all(&mut *conn)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|(id,)| id)
+    .collect::<Vec<_>>();
 
     // Only update if there was more than 1 participant
-    if ratings.len() > 1 {
-        for rating in ratings {
-            let rating = RatingRecord::<T::Data>::try_from(rating).map_err(Error::new)?;
-            update_rating(&rating, model, &mut *conn).await?;
-        }
+    if players.len() > 1 {
+        update_ratings(&players, model, &mut *conn).await?;
     }
 
     Ok(())
-}
-
-/// Closes a match, divying up the pots in each.
-pub async fn calculate_winnings(
-    battle_id: i32,
-    room: &Room,
-    conn: &mut SqliteConnection,
-) -> Result<(), Error> {
-    #[derive(FromRow)]
-    struct ParticipantQuery {
-        #[sqlx(try_from = "u8")]
-        team: PlayerTeam,
-    }
-
-    #[derive(FromRow)]
-    struct WagerQuery {
-        user_id: i32,
-        #[sqlx(try_from = "u8")]
-        victor: PlayerTeam,
-        mobiums: i64,
-        user_mobiums: i64,
-        #[sqlx(try_from = "i32")]
-        user_flags: UserFlags,
-    }
-
-    // To figure out how much money we owe to each player, we first need to
-    // figure out the total sum of each pot alone
-
-    let red_pot = get_total_pot(battle_id, PlayerTeam::Red, &mut *conn).await?;
-    let blue_pot = get_total_pot(battle_id, PlayerTeam::Blue, &mut *conn).await?;
-
-    // If a pot has 0 mobiums to its name, nullify the wagers
-    if red_pot <= 0 || blue_pot <= 0 {
-        return Ok(());
-    }
-
-    let total_winnings = red_pot + blue_pot;
-
-    // We need to figure out who won first
-    let winner = sqlx::query_as::<_, ParticipantQuery>(
-        r#"
-        SELECT team
-        FROM participant
-        WHERE
-            match_id = $1
-            AND NOT no_contest
-        ORDER BY finish_time ASC
-        LIMIT 1
-        "#,
-    )
-    .bind(battle_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-
-    // Do not divy pot up if there are no winners
-    let Some(winner) = winner else {
-        return Ok(());
-    };
-
-    // Go over all wagers to see what players are entitled to what
-    let wagers = sqlx::query_as::<_, WagerQuery>(
-        r#"
-        SELECT
-            w.user_id, w.victor, w.mobiums,
-            u.mobiums AS user_mobiums, u.flags AS user_flags
-        FROM
-            wager w, user u
-        WHERE
-            w.user_id = u.id
-            AND match_id = $1
-        "#,
-    )
-    .bind(battle_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    for wager in wagers {
-        // Skip empty wagers
-        // Wagers can't be deleted, just set to zero
-        if wager.mobiums <= 0 {
-            continue;
-        }
-
-        // Did this user win or lose money?
-        let mobiums_change = if wager.victor == winner.team {
-            // They won! Give them some of the winnings
-            let pot = if wager.victor == PlayerTeam::Red {
-                red_pot
-            } else {
-                blue_pot
-            };
-            let pie_slice = total_winnings * wager.mobiums / pot;
-            // Do not re-award them the money they put on the bet
-            pie_slice - wager.mobiums
-        } else {
-            // They lost... STEAL their money.
-            -wager.mobiums
-        };
-
-        let mut new_mobiums = wager.user_mobiums + mobiums_change;
-
-        let mobiums_gained = max(0, mobiums_change);
-        let mobiums_lost = min(0, mobiums_change) * -1;
-
-        // Do bailouts if user does not have infinite funds
-        let mut bailout = false;
-        if !wager.user_flags.contains(UserFlags::UNLIMITED_WAGERS) {
-            // GG bro...
-            if new_mobiums <= 0 {
-                bailout = true;
-                new_mobiums = 100; // TODO: magic number?
-            }
-        }
-
-        // Update database record
-        sqlx::query(
-            r#"
-            UPDATE user
-            SET
-                mobiums = $1,
-                bailout_count = bailout_count + $2,
-                mobiums_gained = mobiums_gained + $3,
-                mobiums_lost = mobiums_lost + $4
-            WHERE
-                id = $5
-            "#,
-        )
-        .bind(new_mobiums)
-        .bind(if bailout { 1 } else { 0 })
-        .bind(mobiums_gained)
-        .bind(mobiums_lost)
-        .bind(wager.user_id)
-        .execute(&mut *conn)
-        .await?;
-
-        // Send mobiums change to player
-        room.send_mobiums_change(
-            wager.user_id,
-            MobiumsChange {
-                mobiums: new_mobiums,
-                bailout,
-            },
-        );
-    }
-
-    // All the dirty work has been done
-    Ok(())
-}
-
-async fn get_total_pot(
-    battle_id: i32,
-    team: PlayerTeam,
-    conn: &mut SqliteConnection,
-) -> Result<i64, Error> {
-    sqlx::query_as::<_, (i64,)>(
-        r#"
-        SELECT SUM(w.mobiums)
-        FROM wager w
-        WHERE
-            match_id = $1
-            AND w.victor = $2
-        "#,
-    )
-    .bind(battle_id)
-    .bind(u8::from(team))
-    .fetch_one(&mut *conn)
-    .await
-    .map(|(mobiums,)| mobiums)
-    .map_err(Error::from)
 }
 
 /// Gets the replay url of a battle.
@@ -290,50 +100,146 @@ pub fn get_replay_url(battle: &BattleRow, config: &Config) -> Option<String> {
         .map(|(hash, filename)| format!("{}/{}/{}", config.cdn.base_url, hash, filename))
 }
 
+/// Represents a possibly failed left join.
+#[derive(Clone, FromRow)]
+pub struct MaybeSkin {
+    #[sqlx(rename = "skin")]
+    name: Option<String>,
+    realname: Option<String>,
+    kartspeed: Option<i32>,
+    kartweight: Option<i32>,
+}
+
+impl From<MaybeSkin> for Option<Skin> {
+    fn from(value: MaybeSkin) -> Option<Skin> {
+        Some(Skin {
+            name: value.name?,
+            real_name: value.realname?,
+            kart_speed: value.kartspeed?,
+            kart_weight: value.kartweight?,
+        })
+    }
+}
+
+/// A single participant.
+#[derive(Clone, FromRow)]
+pub struct ParticipantRow {
+    // from participants
+    pub id: i32,
+    pub name: String,
+    #[sqlx(try_from = "u8")]
+    pub team: PlayerTeam,
+    pub finish_time: Option<i32>,
+    pub no_contest: bool,
+    // from player table
+    pub short_id: String,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+    #[sqlx(try_from = "i32")]
+    pub flags: UserFlags,
+    pub ordinal: Option<i32>,
+    // from skin table (on good join)
+    #[sqlx(flatten)]
+    pub skin: MaybeSkin,
+}
+
+impl From<ParticipantRow> for Participant {
+    fn from(value: ParticipantRow) -> Participant {
+        Participant {
+            user: User {
+                id: value.short_id,
+                mmr: value.ordinal,
+                display_name: value.display_name,
+                avatar_url: value.avatar_url,
+                flags: value.flags,
+                profiles: None,
+            },
+            name: value.name,
+            team: value.team,
+            finish_time: value.finish_time,
+            no_contest: value.no_contest,
+            skin: value.skin.into(),
+        }
+    }
+}
+
+impl From<&ParticipantRow> for Participant {
+    fn from(value: &ParticipantRow) -> Participant {
+        value.clone().into()
+    }
+}
+
+/// Fetches a single participant by their short_id.
+pub async fn get_participant_by_short_id<T>(
+    battle_id: i32,
+    short_id: &str,
+    _model: &app::Model<T>,
+    conn: &mut SqliteConnection,
+) -> Result<Option<ParticipantRow>, Error>
+where
+    T: Model + 'static,
+{
+    sqlx::query_as::<_, ParticipantRow>(
+        r#"
+        SELECT
+            pt.*,
+            u.short_id,
+            u.display_name,
+            u.avatar_url,
+            u.flags,
+            u.ordinal,
+            s.realname,
+            s.kartspeed,
+            s.kartweight
+        FROM
+            participant pt, profile pr, user u
+        LEFT OUTER JOIN
+            skin s ON pt.skin = s.name
+        WHERE
+            u.short_id = $1
+            AND pt.profile_id = pr.id
+            AND u.id = pr.parent_id
+            AND pt.match_id = $2
+        "#,
+    )
+    .bind(short_id)
+    .bind(&battle_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(Error::from)
+}
+
 /// Preloads the `participants` field of a [`Battle`].
 ///
 /// If this function fails, `battle` will not be modified.
 pub async fn preload_participants<T>(
     battle: &mut Battle,
-    model: &crate::app::Model<T>,
+    _model: &app::Model<T>,
     conn: &mut SqliteConnection,
 ) -> Result<(), Error>
 where
     T: Model + 'static,
 {
-    #[derive(FromRow)]
-    struct ParticipantsQuery {
-        player_id: i32,
-        short_id: String,
-        display_name: String,
-        #[sqlx(try_from = "u8")]
-        team: PlayerTeam,
-        finish_time: Option<i32>,
-        no_contest: bool,
-        skin: Option<String>,
-        kart_speed: Option<i32>,
-        kart_weight: Option<i32>,
-        rating: Option<f32>,
-        deviation: Option<f32>,
-        #[sqlx(rename = "rating_extra")]
-        extra: Option<String>,
-    }
-
-    let participants = sqlx::query_as::<_, ParticipantsQuery>(
+    let participants = sqlx::query_as::<_, ParticipantRow>(
         r#"
         SELECT
             pt.*,
-            p.id AS player_id,
-            p.short_id,
-            p.display_name,
-            p.rating,
-            p.deviation,
-            p.rating_extra
+            u.short_id,
+            u.display_name,
+            u.avatar_url,
+            u.flags,
+            u.ordinal,
+            s.realname,
+            s.kartspeed,
+            s.kartweight
         FROM
-            participant pt, battle b, player p
+            participant pt, battle b, profile pr, user u
+        LEFT OUTER JOIN
+            skin s ON pt.skin = s.name
         WHERE
             pt.match_id = b.id
-            AND pt.player_id = p.id
+            AND pt.profile_id = pr.id
+            AND u.id = pr.parent_id
             AND b.uuid = $1
         "#,
     )
@@ -343,41 +249,8 @@ where
 
     battle.participants = participants
         .into_iter()
-        .map(|mut p| {
-            if !model.ratings_enabled() {
-                Ok((p, None))
-            } else if let Some((rating, deviation)) = p.rating.zip(p.deviation) {
-                let rating = RawRating {
-                    player_id: p.player_id,
-                    rating,
-                    deviation,
-                    extra: p.extra.take(),
-                };
-
-                Rating::<T::Data>::try_from(rating)
-                    .map_err(Error::new)
-                    .map(|rating| (p, Some(rating)))
-            } else {
-                Ok((p, None))
-            }
-        })
-        .map(|res| {
-            res.map(|(p, rating)| Participant {
-                player: Player {
-                    id: p.short_id,
-                    mmr: rating.map(|rating| rating.ordinal() as i32),
-                    display_name: p.display_name,
-                    public_key: None,
-                },
-                team: p.team,
-                finish_time: p.finish_time,
-                no_contest: p.no_contest,
-                skin: p.skin,
-                kart_speed: p.kart_speed,
-                kart_weight: p.kart_weight,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(Participant::from)
+        .collect::<Vec<_>>();
 
     Ok(())
 }
