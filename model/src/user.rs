@@ -51,8 +51,8 @@ bitflags::bitflags! {
         const ADMINISTRATOR = 1;
         /// This user helped beta test. Thanks!
         const BETA_TESTER = 1 << 1;
-        /// This user achieved 3000 MMR at some point.
-        const CHALLENGER = 1 << 1;
+        /// This user achieved 3000 MMR at some point during the period.
+        const BETA_CHALLENGER = 1 << 2;
     }
 }
 

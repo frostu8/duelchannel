@@ -68,24 +68,54 @@ where
     T: Model + Debug,
     T::Data: Debug,
 {
+    #[derive(FromRow)]
+    struct Query {
+        id: i32,
+        #[sqlx(try_from = "i32")]
+        flags: UserFlags,
+    }
+
     // Fetch players
-    let players = sqlx::query_as::<_, (i32,)>(
+    let players = sqlx::query_as::<_, Query>(
         r#"
-        SELECT user_id
-        FROM participant p
-        WHERE p.match_id = $1
+        SELECT u.id, u.flags
+        FROM participant p, user u
+        WHERE
+            p.match_id = $1
+            AND p.user_id = u.id
         "#,
     )
     .bind(battle_id)
     .fetch_all(&mut *conn)
     .await?
     .into_iter()
-    .map(|(id,)| id)
     .collect::<Vec<_>>();
 
     // Only update if there was more than 1 participant
     if players.len() > 1 {
-        update_ratings(&players, model, &mut *conn).await?;
+        let ids = players.iter().map(|s| s.id).collect::<Vec<_>>();
+        let ratings = update_ratings(&ids, model, &mut *conn).await?;
+
+        // Grant certain awards
+        for (player, rating) in players.into_iter().zip(ratings) {
+            // CHALLENGER MEDAL for the season
+            const CHALLENGER_MEDAL: UserFlags = UserFlags::BETA_CHALLENGER;
+
+            // Only update if the player didn't already have the medal
+            if !player.flags.contains(CHALLENGER_MEDAL) && rating.ordinal().ceil() >= 3000.0 {
+                sqlx::query(
+                    r#"
+                        UPDATE user
+                        SET flags = $2
+                        WHERE id = $1
+                        "#,
+                )
+                .bind(player.id)
+                .bind(i32::from(player.flags | CHALLENGER_MEDAL))
+                .execute(&mut *conn)
+                .await?;
+            }
+        }
     }
 
     Ok(())
