@@ -10,7 +10,10 @@ use reqwest::header::{self, HeaderValue};
 
 use crate::{
     Error,
-    request::user::{CreatePlayer, ListPlayers},
+    request::{
+        battle::CreateBattle,
+        user::{CreatePlayer, ListPlayers},
+    },
 };
 
 /// The API client.
@@ -24,6 +27,11 @@ impl Client {
     /// Creates a [`ClientBuilder`].
     pub fn builder() -> ClientBuilder {
         ClientBuilder::default()
+    }
+
+    /// Creates a new battle.
+    pub fn create_battle(&self, level_name: impl Into<String>) -> CreateBattle {
+        CreateBattle::new(self.clone(), level_name)
     }
 
     /// Creates a new player.
