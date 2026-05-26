@@ -53,6 +53,8 @@ use tracing_subscriber::{
 const OPENAPI_FILE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/openapi/openapi.yaml"));
 
+const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
+
 const GIT_COMMIT_HASH: &str = env!("GIT_COMMIT_HASH");
 const GIT_COMMIT_MESSAGE: Option<&str> = option_env!("GIT_COMMIT_MESSAGE");
 
@@ -85,9 +87,9 @@ async fn main() -> eyre::Result<()> {
     };
 
     if let Some(msg) = GIT_COMMIT_MESSAGE {
-        tracing::info!("git {} {}", &GIT_COMMIT_HASH[0..8], msg);
+        tracing::info!("{} {} {}", CARGO_PKG_NAME, &GIT_COMMIT_HASH[0..8], msg);
     } else {
-        tracing::info!("git {}", GIT_COMMIT_HASH);
+        tracing::info!("{} {}", CARGO_PKG_NAME, GIT_COMMIT_HASH);
     }
 
     // Read config file
