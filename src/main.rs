@@ -53,6 +53,9 @@ use tracing_subscriber::{
 const OPENAPI_FILE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/openapi/openapi.yaml"));
 
+const GIT_COMMIT_HASH: &str = env!("GIT_COMMIT_HASH");
+const GIT_COMMIT_MESSAGE: Option<&str> = option_env!("GIT_COMMIT_MESSAGE");
+
 #[main]
 async fn main() -> eyre::Result<()> {
     dotenv::dotenv().ok();
@@ -80,6 +83,12 @@ async fn main() -> eyre::Result<()> {
         Some(path) => path.to_owned(),
         None => PathBuf::from("config.toml"),
     };
+
+    if let Some(msg) = GIT_COMMIT_MESSAGE {
+        tracing::info!("git {} {}", &GIT_COMMIT_HASH[0..8], msg);
+    } else {
+        tracing::info!("git {}", GIT_COMMIT_HASH);
+    }
 
     // Read config file
     let config = read_config(config_path)?;
