@@ -38,7 +38,7 @@ impl Model for Glicko2 {
 
     async fn create_rating(&self, player_id: i32) -> Result<Rating<Self::Data>, Error> {
         Ok(Rating {
-            player_id,
+            user_id: player_id,
             rating: self.config.defaults.rating,
             deviation: self.config.defaults.deviation,
             extra: Glicko2Data {
@@ -228,7 +228,7 @@ fn rate(
     let new_mu = new_phi.powi(2).mul_add(scores, mu);
 
     Rating {
-        player_id: player.player_id,
+        user_id: player.user_id,
         rating: new_mu.mul_add(173.7178, 1500.0),
         deviation: new_phi * 173.7178,
         extra: Glicko2Data {
@@ -376,7 +376,7 @@ mod tests {
 
     fn new_player_rating() -> Glicko2RatingRecord {
         RatingRecord {
-            player_id: 1,
+            user_id: 1,
             period_id: 1,
             rating: 1500.0,
             deviation: 350.0,

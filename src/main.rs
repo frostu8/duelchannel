@@ -14,26 +14,25 @@ use axum::{
     extract::{MatchedPath, Request},
     middleware::{Next, from_fn},
     response::{IntoResponse, Response},
-    routing::{get, patch, post, put},
+    routing::{get, patch, post},
 };
 
 use axum_server::Handle;
 
-use ring_channel::{
+use duelchannel::{
     app::{AppState, Model, Unrated},
     auth::oauth2::OauthState,
     cli::{self, Args, Command, MmrCommand, MmrDump},
     config::{Config, RatingModelConfig, StorageService, read_config},
     error::Error,
-    player::mmr::{self, glicko2::Glicko2, init_rating, next_rating_period, openskill::OpenSkill},
-    room, routes,
+    routes,
+    schema::user::mmr::{self, dump_rating, glicko2::Glicko2, init_rating, openskill::OpenSkill},
 };
 
 use sqlx::{Sqlite, pool::PoolOptions};
 
-use tokio::{main, select, signal, sync::Semaphore};
+use tokio::{main, select, signal};
 
-use tokio_cron_scheduler::{Job, JobScheduler};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -57,6 +56,10 @@ const OPENAPI_FILE: &str =
 #[main]
 async fn main() -> eyre::Result<()> {
     dotenv::dotenv().ok();
+
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
 
     let registry = tracing_subscriber::registry();
 
@@ -172,7 +175,7 @@ where
                     .await?;
 
                 // update all players ratings
-                let player_ids = sqlx::query_as::<_, (i32,)>("SELECT id FROM player")
+                let player_ids = sqlx::query_as::<_, (i32,)>("SELECT id FROM user")
                     .fetch_all(&mut *tx)
                     .await?;
 
@@ -206,7 +209,7 @@ where
                     .await?;
                 }
 
-                ring_channel::player::mmr::dump_rating(std::io::stdout(), &model, &mut *tx).await?;
+                dump_rating(std::io::stdout(), &model, &mut *tx).await?;
 
                 // rollback transaction
                 tx.rollback().await?;
@@ -250,23 +253,25 @@ where
         config: Arc::new(config.clone()),
         object_storage,
         db: db.clone(),
-        room: room::Room::new(),
     };
 
     // Build routes
     let mut api_routes = Router::<AppState>::new()
-        .route("/socket", get(routes::ws::handler))
-        .nest(
-            "/players",
-            Router::<AppState>::new()
-                .route("/", post(routes::player::register::<T>))
-                .route("/{player_id}", get(routes::player::show::<T>)),
-        )
+        // .nest(
+        //     "/players",
+        //     Router::<AppState>::new()
+        //         .route("/", post(routes::player::register::<T>))
+        //         .route("/{player_id}", get(routes::player::show::<T>)),
+        // )
+        // .nest(
+        //     "/chat",
+        //     Router::<AppState>::new().route("/messages", post(routes::chat::create::<T>)),
+        // )
         .nest(
             "/matches",
             Router::<AppState>::new()
                 .route("/", get(routes::battle::list::<T>))
-                .route("/", post(routes::battle::create::<T>))
+                .route("/", post(routes::battle::create))
                 .nest(
                     "/{battle_id}",
                     Router::<AppState>::new()
@@ -276,11 +281,7 @@ where
                             "/players/{short_id}",
                             patch(routes::battle::player::update::<T>),
                         )
-                        .route("/replay", post(routes::battle::replay::upload::<T>))
-                        .route("/wagers", get(routes::battle::wager::list))
-                        .route("/wagers/~me", get(routes::battle::wager::show_self))
-                        .route("/wagers/~me", put(routes::battle::wager::create))
-                        .route("/wagers/{username}", get(routes::battle::wager::show)),
+                        .route("/replay", post(routes::battle::replay::upload::<T>)),
                 ),
         )
         .nest(
@@ -290,12 +291,12 @@ where
                 .route("/~me", patch(routes::server::update)),
         )
         .nest(
-            "/chat",
-            Router::<AppState>::new().route("/messages", post(routes::chat::create::<T>)),
-        )
-        .nest(
-            "/users",
-            Router::<AppState>::new().route("/~me", get(routes::user::show_me)),
+            "/players",
+            Router::<AppState>::new()
+                .route("/", post(routes::player::create::<T>))
+                .route("/", get(routes::player::list))
+                .route("/~me", get(routes::player::show_self))
+                .route("/{short_id}", get(routes::player::show)),
         )
         .with_state(state.clone());
 
@@ -304,8 +305,8 @@ where
             .with_redirect_to(config.server.redirect_url.clone());
 
         let oauth_router = Router::<OauthState>::new()
-            .route("/users/~redirect", get(routes::user::auth::redirect))
-            .route("/users/~login", get(routes::user::auth::login))
+            .route("/auth/~redirect", get(routes::auth::redirect))
+            .route("/auth/~login", get(routes::auth::login))
             .with_state(oauth_state);
 
         api_routes = api_routes.merge(oauth_router);
@@ -372,34 +373,6 @@ where
 
     // run shutdown task to detect shutdowns
     tokio::spawn(shutdown_signal(handle.clone()));
-
-    // start cron jobs
-    let sched = JobScheduler::new().await?;
-    let state_clone = state.clone();
-    let model_clone = model.clone();
-
-    // Start the rating period updater
-    // This has to be locked so multiple threads aren't doing this together
-    let semaphore = Arc::new(Semaphore::new(1));
-    sched
-        .add(Job::new_async("1/60 * * * * *", move |_uuid, _l| {
-            let state = state_clone.clone();
-            let semaphore = semaphore.clone();
-            let model = model_clone.clone();
-
-            Box::pin(async move {
-                if let Ok(_permit) = semaphore.try_acquire() {
-                    let mut conn = state.db.acquire().await.expect("conn acquire");
-                    let _period = next_rating_period(&model, &mut conn)
-                        .await
-                        .expect("update period");
-                }
-            })
-        })?)
-        .await?;
-
-    sched.shutdown_on_ctrl_c();
-    sched.start().await?;
 
     let addr: SocketAddr = ([0, 0, 0, 0], config.http.port).into();
 

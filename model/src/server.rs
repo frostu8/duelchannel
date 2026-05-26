@@ -16,8 +16,8 @@ pub struct Server {
     ///
     /// May not be the "canonical name" on the server list.
     pub name: String,
-    /// Map bans.
-    pub bans: HashMap<String, MapConfig>,
+    /// Map config.
+    pub maps: HashMap<String, MapConfig>,
 }
 
 /// A config for a specific map.

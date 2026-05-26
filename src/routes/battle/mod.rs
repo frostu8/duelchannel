@@ -2,7 +2,6 @@
 
 pub mod player;
 pub mod replay;
-pub mod wager;
 
 pub use replay::upload;
 
@@ -11,13 +10,14 @@ use axum::{
     extract::{Path, State},
 };
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 
 use garde::Validate;
 
-use ring_channel_model::{
-    Player,
+use duelchannel_model::{
+    User,
     battle::{Battle, BattleStatus, Participant},
+    profile::Skin,
     request::battle::{CreateBattleRequest, UpdateBattleRequest},
 };
 
@@ -25,24 +25,22 @@ use http::StatusCode;
 
 use serde::Deserialize;
 
-use sqlx::{FromRow, SqliteConnection};
+use sqlx::SqliteConnection;
 
 use tracing::instrument;
 
 use uuid::Uuid;
 
-use std::fmt::Debug;
+use std::{collections::HashSet, fmt::Debug};
 
 use crate::{
     app::{AppForm, AppGarde, AppJson, AppState, Model, Payload},
     auth::api_key::ServerAuthentication,
-    battle::{
-        BattleRow, calculate_winnings, get_replay_url, preload_participants,
-        update_participant_ratings,
-    },
     error::{Error, ErrorKind},
-    player::mmr::{self, Rating, RawRating},
-    room::BattleData,
+    schema::{
+        battle::{BattleRow, get_replay_url, preload_participants, update_participant_ratings},
+        user::{get_user_by_public_key, mmr},
+    },
 };
 
 /// A query for [`list`].
@@ -76,11 +74,8 @@ where
 
     let rows = sqlx::query_as::<_, BattleRow>(
         r#"
-        SELECT
-            id, uuid, level_name, status, margin_score, replay_hash,
-            replay_filename, inserted_at, closed_at
-        FROM
-            battle
+        SELECT b.*
+        FROM battle b
         WHERE
             ($1 IS NULL OR inserted_at < $1)
             AND ($2 IS NULL OR inserted_at > $2)
@@ -123,10 +118,8 @@ where
 
     let row = sqlx::query_as::<_, BattleRow>(
         r#"
-        SELECT
-            id, uuid, level_name, status, margin_score, replay_hash,
-            replay_filename, inserted_at, closed_at
-        FROM battle
+        SELECT b.*
+        FROM battle b
         WHERE uuid = $1
         "#,
     )
@@ -147,126 +140,125 @@ where
     Ok(AppJson(battle))
 }
 
+async fn upsert_skin(skin: &Skin, conn: &mut SqliteConnection) -> Result<(), Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO skin (name, realname, kartspeed, kartweight)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(&skin.name)
+    .bind(&skin.real_name)
+    .bind(&skin.kart_speed)
+    .bind(&skin.kart_weight)
+    .execute(&mut *conn)
+    .await
+    .map(|_| ())
+    .map_err(Error::from)
+}
+
 /// Creates a match.
-#[instrument(skip(state, model))]
-pub async fn create<T>(
-    _auth_guard: ServerAuthentication,
-    Extension(model): Extension<Model<T>>,
+#[instrument(skip(state))]
+pub async fn create(
+    server_auth: ServerAuthentication,
     State(state): State<AppState>,
     Payload(request): Payload<CreateBattleRequest>,
-) -> Result<(StatusCode, AppJson<Battle>), Error>
-where
-    T: mmr::Model + 'static,
-{
-    #[derive(FromRow)]
-    struct PlayerQuery {
-        #[sqlx(rename = "player_id")]
-        id: i32,
-        short_id: String,
-        display_name: String,
-        rating: Option<f32>,
-        deviation: Option<f32>,
-        #[sqlx(rename = "rating_extra")]
-        extra: Option<String>,
-    }
-
-    let uuid = Uuid::new_v4();
+) -> Result<(StatusCode, AppJson<Battle>), Error> {
     let now = Utc::now();
 
-    let closes_in = TimeDelta::seconds(request.bet_time.unwrap_or(20));
-    let closed_at = now + closes_in;
-
     let mut tx = state.db.begin().await?;
+
+    // Generate new UUID
+    let uuid = Uuid::new_v4();
 
     // Create the battle
     let (match_id,) = sqlx::query_as::<_, (i32,)>(
         r#"
-        INSERT INTO battle (uuid, level_name, inserted_at, closed_at, status)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO battle (inserted_at, updated_at, server_id, uuid, level_name, status)
+        VALUES ($1, $1, $2, $3, $4, $5)
         RETURNING id
         "#,
     )
+    .bind(now)
+    .bind(server_auth.id)
     .bind(uuid.hyphenated().to_string())
     .bind(&request.level_name)
-    .bind(now)
-    .bind(closed_at)
     .bind(u8::from(BattleStatus::Ongoing))
     .fetch_one(&mut *tx)
     .await?;
 
     // register players
+    let mut short_ids = HashSet::new();
+
     let mut participants = Vec::with_capacity(request.participants.len());
     for input_player in request.participants.into_iter() {
-        // find player
-        let player = sqlx::query_as::<_, PlayerQuery>(
+        let profile_user = get_user_by_public_key(&input_player.public_key, &mut *tx).await?;
+        let Some(profile_user) = profile_user else {
+            tx.rollback().await?;
+            return Err(ErrorKind::MissingProfile(input_player.public_key).into());
+        };
+
+        if short_ids.contains(&input_player.user_id) {
+            return Err(ErrorKind::DuplicateParticipant(input_player.user_id).into());
+        }
+
+        let user = sqlx::query_as::<_, (i32,)>(
             r#"
-            SELECT
-                p.id AS player_id,
-                p.short_id,
-                p.display_name,
-                p.rating,
-                p.deviation,
-                p.rating_extra
-            FROM player p
+            SELECT id
+            FROM user
             WHERE short_id = $1
             "#,
         )
-        .bind(&input_player.id)
+        .bind(&input_player.user_id)
         .fetch_optional(&mut *tx)
         .await?;
-
-        if let Some(mut player) = player {
-            let rating = if !model.ratings_enabled() {
-                None
-            } else if let Some((rating, deviation)) = player.rating.zip(player.deviation) {
-                let rating = RawRating {
-                    player_id: player.id,
-                    rating,
-                    deviation,
-                    extra: player.extra.take(),
-                };
-
-                Some(Rating::<T::Data>::try_from(rating).map_err(Error::new)?)
-            } else {
-                None
-            };
-
-            // add player to match
-            sqlx::query(
-                r#"
-                INSERT INTO participant
-                    (match_id, player_id, team, no_contest, skin, kart_speed, kart_weight)
-                VALUES ($1, $2, $3, FALSE, $4, $5, $6)
-                "#,
-            )
-            .bind(match_id)
-            .bind(player.id)
-            .bind(u8::from(input_player.team))
-            .bind(&input_player.skin)
-            .bind(input_player.kart_speed)
-            .bind(input_player.kart_weight)
-            .execute(&mut *tx)
-            .await?;
-
-            // insert players to vec
-            participants.push(Participant {
-                player: Player {
-                    id: player.short_id,
-                    mmr: rating.map(|r| r.ordinal() as i32),
-                    public_key: None,
-                    display_name: player.display_name,
-                },
-                team: input_player.team,
-                finish_time: None,
-                no_contest: false,
-                skin: Some(input_player.skin),
-                kart_speed: Some(input_player.kart_speed),
-                kart_weight: Some(input_player.kart_weight),
-            })
-        } else {
+        let Some((user_id,)) = user else {
             tx.rollback().await?;
-            return Err(ErrorKind::MissingParticipant(input_player.id.clone()).into());
+            return Err(ErrorKind::MissingParticipant(input_player.user_id).into());
+        };
+
+        if let Some(skin) = input_player.skin.as_ref() {
+            upsert_skin(skin, &mut *tx).await?;
         }
+
+        // add player to match
+        sqlx::query(
+            r#"
+            INSERT INTO participant (
+                profile_id,
+                match_id,
+                user_id,
+                name,
+                team,
+                skin
+            )
+            SELECT p.id, $2, $3, $4, $5, $6
+            FROM profile p
+            WHERE p.public_key = $1
+            "#,
+        )
+        .bind(input_player.public_key.as_bytes())
+        .bind(match_id)
+        .bind(user_id)
+        .bind(&input_player.name)
+        .bind(u8::from(input_player.team))
+        .bind(input_player.skin.as_ref().map(|s| &s.name))
+        .execute(&mut *tx)
+        .await?;
+
+        // Track what short IDs we have seen
+        short_ids.insert(input_player.user_id);
+
+        // insert players to vec
+        participants.push(Participant {
+            user: User::from(profile_user),
+            name: input_player.name,
+            team: input_player.team,
+            finish_time: None,
+            no_contest: false,
+            skin: input_player.skin,
+        });
     }
 
     tx.commit().await?;
@@ -274,29 +266,19 @@ where
     // Create battle model
     let schema = BattleRow {
         id: match_id,
+        server_id: server_auth.id,
         uuid: uuid.hyphenated().to_string(),
         level_name: request.level_name,
         status: BattleStatus::Ongoing,
         replay_hash: None,
         replay_filename: None,
         margin_score: 0,
+        concluded_at: None,
         inserted_at: now,
-        closed_at: closed_at,
+        updated_at: now,
     };
-
-    let mut battle = Battle::from(&schema);
-    battle.participants = participants.clone();
-    battle.accepting_bets = true;
-    battle.closes_in = Some(closes_in.num_milliseconds());
-
-    // Send the notice of the new battle to all connected clients
-    state
-        .room
-        .update_battle(BattleData {
-            schema,
-            participants,
-        })
-        .await;
+    let mut battle = Battle::from(schema);
+    battle.participants = participants;
 
     Ok((StatusCode::CREATED, AppJson(battle)))
 }
@@ -320,13 +302,9 @@ where
 
     let battle_query = sqlx::query_as::<_, BattleRow>(
         r#"
-        SELECT
-            id, uuid, level_name, status, margin_score, replay_hash,
-            replay_filename, inserted_at, closed_at
-        FROM
-            battle
-        WHERE
-            uuid = $1
+        SELECT b.*
+        FROM battle b
+        WHERE uuid = $1
         "#,
     )
     .bind(uuid.hyphenated().to_string())
@@ -358,10 +336,8 @@ where
         // Set all participants without a clear time to NO CONTEST
         sqlx::query(
             r#"
-            UPDATE
-                participant
-            SET
-                no_contest = TRUE
+            UPDATE participant
+            SET no_contest = TRUE
             WHERE
                 finish_time IS NULL
                 AND match_id = $1
@@ -372,11 +348,6 @@ where
         .await?;
 
         set_concluded = Some(now);
-
-        // if this cancels the betting session, we need to stop accepting bets
-        if now < battle_query.closed_at {
-            battle_query.closed_at = now;
-        }
 
         // Update base schema value
         battle_query.status = new_status;
@@ -394,16 +365,14 @@ where
             battle
         SET
             status = IFNULL($2, status),
-            closed_at = $3,
-            concluded_at = IFNULL($4, concluded_at),
-            margin_score = IFNULL($5, margin_score)
+            concluded_at = IFNULL($3, concluded_at),
+            margin_score = IFNULL($4, margin_score)
         WHERE
             id = $1
         "#,
     )
     .bind(battle_query.id)
     .bind(request.status.map(|s| u8::from(s)))
-    .bind(battle_query.closed_at)
     .bind(set_concluded)
     .bind(request.margin_score)
     .execute(&mut *tx)
@@ -421,43 +390,7 @@ where
     battle.replay_url = get_replay_url(&battle_query, &state.config);
     preload_participants(&mut battle, &model, &mut *tx).await?;
 
-    // Update websocket listeners
-    state
-        .room
-        .update_battle(BattleData {
-            schema: battle_query.clone(),
-            participants: battle.participants.clone(),
-        })
-        .await;
-
-    if request.status == Some(BattleStatus::Concluded) {
-        // distribute pots!
-        calculate_winnings(battle_query.id, &state.room, &mut *tx).await?;
-    }
-
     tx.commit().await?;
 
     Ok(AppJson(battle))
-}
-
-async fn get_battle_id(match_id: Uuid, conn: &mut SqliteConnection) -> Result<i32, Error> {
-    #[derive(FromRow)]
-    struct BattleQuery {
-        id: i32,
-    }
-
-    let battle = sqlx::query_as::<_, BattleQuery>(
-        r#"
-        SELECT id FROM battle WHERE uuid = $1
-        "#,
-    )
-    .bind(match_id.hyphenated().to_string())
-    .fetch_optional(&mut *conn)
-    .await?;
-
-    let Some(battle) = battle else {
-        return Err(Error::not_found(format!("Match {} not found", match_id)));
-    };
-
-    Ok(battle.id)
 }

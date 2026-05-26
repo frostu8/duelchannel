@@ -1,5 +1,5 @@
 [package]
-name = "ring-channel-model"
+name = "duelchannel-model"
 version = "0.1.0"
 authors = ["Dante Helmore <frostu8@protonmail.com>"]
 edition.workspace = true
@@ -9,6 +9,8 @@ chrono = { workspace = true }
 num_enum = { workspace = true }
 serde = { workspace = true }
 serde_repr = { workspace = true }
-derive_more = { workspace = true, features = ["display", "error", "deref", "from"] }
+serde_with = { workspace = true }
+base16 = { workspace = true }
+derive_more = { workspace = true, features = ["display", "error", "deref", "deref_mut", "from"] }
 bitflags = { workspace = true }
-bytemuck.workspace = true
+bytemuck = { workspace = true }

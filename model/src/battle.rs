@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
-use crate::{player::Player, user::User};
+use crate::{profile::Skin, user::User};
 
 /// A single match.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -18,8 +18,6 @@ pub struct Battle {
     pub id: String,
     /// The level name the match played on.
     pub level_name: String,
-    /// The participants.
-    pub participants: Vec<Participant>,
     /// The status of the match.
     pub status: BattleStatus,
     /// The margin score of the match.
@@ -29,22 +27,17 @@ pub struct Battle {
     pub margin_score: i32,
     /// A link to the replay associated with the match.
     pub replay_url: Option<String>,
-    /// Whether the match is accepting bets or not.
-    pub accepting_bets: bool,
     /// When the match started.
     pub started_at: DateTime<Utc>,
-    /// The amount of time that will pass before wagers close, in ms.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub closes_in: Option<i64>,
+    /// The participants.
+    pub participants: Vec<Participant>,
 }
 
 /// A participant in a match.
 #[derive(Clone, Debug, Deref, Deserialize, Serialize)]
 pub struct Participant {
-    /// The player participating.
-    #[deref]
-    #[serde(flatten)]
-    pub player: Player,
+    /// The name of the player.
+    pub name: String,
     /// The team they are on.
     pub team: PlayerTeam,
     /// The player's finish time, if they finished.
@@ -53,15 +46,13 @@ pub struct Participant {
     /// If the player no contest'd.
     #[serde(default)]
     pub no_contest: bool,
-    /// The player's kartspeed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kart_speed: Option<i32>,
-    /// The player's kartweight.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kart_weight: Option<i32>,
-    /// The skin the player is running.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skin: Option<String>,
+    /// The player's skin.
+    ///
+    /// May not be present, for very old matches.
+    pub skin: Option<Skin>,
+    /// The user participating.
+    #[deref]
+    pub user: User,
 }
 
 /// The match's status.
@@ -84,8 +75,6 @@ pub enum BattleStatus {
     /// The match concluded normally.
     Concluded = 1,
     /// The match was cancelled.
-    ///
-    /// Wagers were refunded, and the pot was cancelled.
     Cancelled = 2,
 }
 
@@ -112,18 +101,4 @@ pub enum PlayerTeam {
     ///
     /// Player 2 is on this team.
     Blue = 1,
-}
-
-/// A battle bet.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct BattleWager {
-    /// The user that made this wager.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub user: Option<User>,
-    /// The wager amount.
-    pub mobiums: i64,
-    /// What team the player is betting to win.
-    pub victor: PlayerTeam,
-    /// When the wager was last updated at.
-    pub updated_at: DateTime<Utc>,
 }

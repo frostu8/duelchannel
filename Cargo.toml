@@ -1,5 +1,5 @@
 [package]
-name = "ring-channel"
+name = "duelchannel"
 version = "0.1.0"
 authors = ["Dante Helmore <frostu8@protonmail.com>"]
 edition.workspace = true
@@ -10,7 +10,7 @@ description = "Backend for duelchannel.ringrace.rs"
 tracy = ["tracing-tracy"]
 
 [dependencies]
-ring-channel-model = { workspace = true }
+duelchannel-model = { workspace = true }
 axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 axum-server = "0.7"
 chrono = { workspace = true }
@@ -41,19 +41,19 @@ twilight-model = { git = "https://github.com/twilight-rs/twilight.git" }
 twilight-http = { git = "https://github.com/twilight-rs/twilight.git" }
 clap = { version = "4", features = ["derive"] }
 sha2 = "0.10"
-base16 = "0.2"
+base16 = { workspace = true }
 cookie = { version = "0.18", features = ["private"] }
 pin-project = "1"
 futures-core = "0.3"
 axum-valid = { version = "0.24", default-features = false, features = ["garde", "basic"] }
-garde = { version = "0.22", features = ["derive"] }
+garde = { workspace = true, features = ["derive"] }
 humantime = "2"
-tokio-cron-scheduler = { version = "0.15", features = ["signal"] }
 tracing-tracy = { version = "0.11", features = ["enable"], optional = true }
 ron = "0.12.1"
 eyre = "0.6.12"
 opendal = { version = "0.56.0", features = ["services-fs", "services-s3"] }
 bytes = "1.11.1"
+rustls = "0.23.40"
 
 [workspace]
 resolver = "3"
@@ -63,11 +63,14 @@ members = ["model"]
 edition = "2024"
 
 [workspace.dependencies]
+base16 = "0.2"
 bitflags = { version = "2.10.0", features = ["serde", "std"] }
 bytemuck = "1.24"
 chrono = { version = "0.4", features = ["serde"] }
 derive_more = "2"
-ring-channel-model = { path = "./model" }
+duelchannel-model = { path = "./model" }
 num_enum = "0.7"
 serde = { version = "1", features = ["derive"] }
+garde = "0.22"
 serde_repr = "0.1"
+serde_with = "3"

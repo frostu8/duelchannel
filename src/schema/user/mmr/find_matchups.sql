@@ -1,6 +1,6 @@
 -- SQL script for finding all matchups a player has played in a period.
 -- Inputs:
---   $1: id of player
+--   $1: id of user
 --   $2: time from
 --   $3: time to
 -- Outputs: opponent rating r.*, b.status, posiiton, mw.finish_time
@@ -30,10 +30,10 @@ FROM
 WHERE
     me.match_id = b.id
     AND op.match_id = b.id
-    AND op.player_id = r.player_id
+    AND op.user_id  = r.user_id
     -- Filter out opponents and "me"
-    AND me.player_id = $1
-    AND NOT op.player_id = $1
+    AND me.user_id  = $1
+    AND NOT op.user_id = $1
     -- Only get matches between the bounds
     AND b.concluded_at >= $2
     AND b.concluded_at < $3

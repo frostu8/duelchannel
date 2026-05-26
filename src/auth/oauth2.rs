@@ -50,7 +50,7 @@ impl OauthState {
         config: &DiscordConfig,
     ) -> Result<OauthState, Error> {
         let base_url = base_url.as_ref();
-        let redirect_url = format!("{}/users/~login", base_url);
+        let redirect_url = format!("{}/auth/~login", base_url);
 
         let client = BasicClient::new(ClientId::new(config.client_id.to_string()))
             .set_client_secret(ClientSecret::new(config.client_secret.clone()))

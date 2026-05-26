@@ -72,10 +72,10 @@ impl OpenSkill {
 impl Model for OpenSkill {
     type Data = OpenSkillData;
 
-    async fn create_rating(&self, player_id: i32) -> Result<Rating<Self::Data>, Error> {
+    async fn create_rating(&self, user_id: i32) -> Result<Rating<Self::Data>, Error> {
         let mut process = self.process.write().await;
 
-        let data = process.request(CreateRatingRequest { player_id }).await?;
+        let data = process.request(CreateRatingRequest { user_id }).await?;
         match data {
             Response::CreateRating(resp) => Ok(resp.rating),
             _ => Err(Error::new(UnexpectedResponse)),
@@ -164,7 +164,7 @@ pub struct UpdateConfigResponse {}
 /// A request to [`Model::create_rating`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreateRatingRequest {
-    pub player_id: i32,
+    pub user_id: i32,
 }
 
 impl From<CreateRatingRequest> for Request {

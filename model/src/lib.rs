@@ -3,14 +3,15 @@
 pub mod battle;
 pub mod chat;
 pub mod error;
-pub mod message;
-pub mod player;
+pub mod profile;
 pub mod request;
 pub mod response;
+pub mod rrid;
 pub mod server;
 pub mod user;
 
-pub use battle::{Battle, BattleWager};
+pub use battle::Battle;
 pub use error::ApiError;
-pub use player::{Player, Rrid};
-pub use user::User;
+pub use profile::Profile;
+pub use rrid::Rrid;
+pub use user::{CurrentUser, User};

@@ -11,13 +11,12 @@ use figment::{
 };
 
 use humantime::format_duration;
-use ring_channel_model::user::to_username_lossy;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use eyre::Error;
 
-use crate::player::mmr::{glicko2::Glicko2Config, openskill::OpenSkillConfig};
+use crate::schema::user::mmr::{glicko2::Glicko2Config, openskill::OpenSkillConfig};
 
 /// Full application configuration.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -50,8 +49,6 @@ pub struct ServerConfig {
     pub secure_sessions: bool,
     /// Key used to encrypt cookies.
     pub encryption_key: Option<String>,
-    /// Wager bot config.
-    pub bot: WagerBotConfig,
 }
 
 impl Default for ServerConfig {
@@ -62,7 +59,6 @@ impl Default for ServerConfig {
             database_url: None,
             secure_sessions: true,
             encryption_key: None,
-            bot: WagerBotConfig::default(),
         }
     }
 }
@@ -125,36 +121,6 @@ pub struct S3Config {
     pub access_key_id: String,
     /// The secret access key.
     pub access_key_secret: String,
-}
-
-/// Wager bot configuration.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct WagerBotConfig {
-    /// Enables the wager bot.
-    pub enabled: bool,
-    /// The username of the wager bot.
-    ///
-    /// This will identify the bot on the server. If this is changed to
-    /// something else, the server will make a new bot account.
-    pub username: String,
-    /// The display name of the wager bot.
-    pub display_name: String,
-    /// A URL to the avatar of the wager bot.
-    pub avatar: Option<String>,
-    /// How much money the bot will wager on an empty side.
-    pub wager_amount: i64,
-}
-
-impl Default for WagerBotConfig {
-    fn default() -> Self {
-        WagerBotConfig {
-            enabled: false,
-            username: to_username_lossy("xxmetalxx").into(),
-            display_name: "Metal Sonic".into(),
-            avatar: None,
-            wager_amount: 400,
-        }
-    }
 }
 
 /// Configuration for MMR.

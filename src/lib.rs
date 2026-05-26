@@ -4,13 +4,10 @@
 
 pub mod app;
 pub mod auth;
-pub mod battle;
 pub mod cli;
 pub mod config;
 pub mod error;
 pub mod multipart;
-pub mod player;
-pub mod room;
 pub mod routes;
+pub mod schema;
 pub mod session;
-pub mod user;

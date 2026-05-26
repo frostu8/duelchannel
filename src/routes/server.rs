@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use axum::extract::State;
 
 use chrono::Utc;
-use ring_channel_model::{
+use duelchannel_model::{
     request::server::UpdateServerRequest,
     server::{BannedStatus, MapConfig, Server},
 };
@@ -35,7 +35,7 @@ pub async fn show_self(
     let mut server = Server {
         id: auth.id,
         name: auth.server_name,
-        bans: HashMap::new(),
+        maps: HashMap::new(),
     };
 
     preload_map_configs(&mut server, &mut *conn).await?;
@@ -58,7 +58,7 @@ pub async fn update(
     let mut server = Server {
         id: auth.id,
         name: auth.server_name,
-        bans: HashMap::new(),
+        maps: HashMap::new(),
     };
 
     preload_map_configs(&mut server, &mut *tx).await?;
@@ -87,10 +87,10 @@ pub async fn update(
 
     // Apply bans if applicable
     if let Some(bans) = request.bans {
-        let mut new_bans = HashMap::with_capacity(server.bans.len());
+        let mut new_bans = HashMap::with_capacity(server.maps.len());
 
         for (lumpname, config) in bans {
-            if let Some(old_ban) = server.bans.remove(&lumpname) {
+            if let Some(old_ban) = server.maps.remove(&lumpname) {
                 // Update old ban info
                 if old_ban != config {
                     sqlx::query(
@@ -131,7 +131,7 @@ pub async fn update(
         }
 
         // Empty old bans
-        std::mem::swap(&mut server.bans, &mut new_bans);
+        std::mem::swap(&mut server.maps, &mut new_bans);
         for (lumpname, _) in new_bans {
             sqlx::query(
                 r#"
@@ -169,7 +169,7 @@ async fn preload_map_configs(
     .map_err(Error::new)?;
 
     for row in res {
-        server.bans.insert(
+        server.maps.insert(
             row.lumpname,
             MapConfig {
                 status: row.status,

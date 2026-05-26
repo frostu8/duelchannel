@@ -7,12 +7,11 @@ use axum::{
 
 use chrono::Utc;
 use derive_more::{Display, Error};
+use duelchannel_model::user::UserFlags;
 use oauth2::{
     AuthorizationCode, CsrfToken, HttpClientError, RefreshToken, RequestTokenError, Scope,
     StandardRevocableToken, TokenResponse as _,
 };
-
-use ring_channel_model::user::to_username_lossy;
 
 use twilight_model::user::CurrentUser as DiscordUser;
 
@@ -25,6 +24,7 @@ use tracing::instrument;
 use crate::{
     auth::oauth2::{OauthState, Session},
     error::{Error, ErrorKind},
+    schema::user::UserBuilder,
 };
 
 #[derive(FromRow)]
@@ -202,22 +202,11 @@ async fn try_create_user(
     remote_user: &DiscordUser,
     tx: &mut SqliteConnection,
 ) -> Result<i32, Error> {
-    let now = Utc::now();
-
     // user needs to be created
-    let username = if remote_user.discriminator > 0 {
-        // Old, tag-style username
-        format!("{}_{}", remote_user.name, remote_user.discriminator())
-    } else {
-        // New username
-        remote_user.name.clone()
-    };
-    let username = to_username_lossy(username);
-
     let display_name = remote_user
         .global_name
         .as_ref()
-        .unwrap_or(&remote_user.name);
+        .unwrap_or_else(|| &remote_user.name);
 
     let avatar_url = remote_user.avatar.map(|avatar_hash| {
         format!(
@@ -226,43 +215,13 @@ async fn try_create_user(
         )
     });
 
-    let res = sqlx::query_as::<_, (i32,)>(
-        r#"
-        INSERT INTO user (username, display_name, avatar, inserted_at, updated_at)
-        VALUES ($1, $2, $3, $4, $4)
-        RETURNING id
-        "#,
-    )
-    .bind(&username)
-    .bind(display_name)
-    .bind(avatar_url)
-    .bind(now)
-    .fetch_one(&mut *tx)
-    .await;
+    // Create new user
+    let user = UserBuilder::new(display_name)
+        .flags(UserFlags::BETA_TESTER)
+        .avatar_url(avatar_url)
+        .create(&mut *tx)
+        .await?;
 
-    // check for unique violation
-    match res {
-        Ok((new_user_id,)) => {
-            tracing::info!(id={new_user_id}, %username, "creating new user");
-            Ok(new_user_id)
-        }
-        Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
-            // create plain user
-            let (new_user_id,) = sqlx::query_as::<_, (i32,)>(
-                r#"
-                INSERT INTO user (username, display_name, inserted_at, updated_at)
-                VALUES (NULL, $1, $2, $2)
-                RETURNING id
-                "#,
-            )
-            .bind(display_name)
-            .bind(now)
-            .fetch_one(&mut *tx)
-            .await?;
-
-            tracing::info!(id = { new_user_id }, "creating new user w/ null username");
-            Ok(new_user_id)
-        }
-        Err(err) => Err(err.into()),
-    }
+    tracing::info!(id={user.id}, %display_name, "creating new user");
+    Ok(user.id)
 }
