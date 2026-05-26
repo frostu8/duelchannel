@@ -102,7 +102,7 @@ where
             const CHALLENGER_MEDAL: UserFlags = UserFlags::BETA_CHALLENGER;
 
             // Only update if the player didn't already have the medal
-            if !player.flags.contains(CHALLENGER_MEDAL) && rating.ordinal().ceil() >= 3000.0 {
+            if !player.flags.contains(CHALLENGER_MEDAL) && rating.ordinal().ceil() >= 2000.0 {
                 sqlx::query(
                     r#"
                         UPDATE user
