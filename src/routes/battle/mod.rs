@@ -145,7 +145,11 @@ async fn upsert_skin(skin: &Skin, conn: &mut SqliteConnection) -> Result<(), Err
         r#"
         INSERT INTO skin (name, realname, kartspeed, kartweight)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT DO NOTHING
+        ON CONFLICT DO UPDATE
+        SET
+            realname = $2,
+            kartspeed = $3,
+            kartweight = $4
         "#,
     )
     .bind(&skin.name)
