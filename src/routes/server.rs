@@ -12,8 +12,9 @@ use duelchannel_model::{
 use sqlx::{FromRow, SqliteConnection};
 
 use crate::{
-    app::{AppJson, AppState, Payload},
+    app::AppState,
     auth::api_key::ServerAuthentication,
+    body::{Json, Payload},
     error::Error,
 };
 
@@ -29,7 +30,7 @@ struct MapConfigQuery {
 pub async fn show_self(
     auth: ServerAuthentication,
     State(state): State<AppState>,
-) -> Result<AppJson<Server>, Error> {
+) -> Result<Json<Server>, Error> {
     let mut conn = state.db.acquire().await.map_err(Error::new)?;
 
     let mut server = Server {
@@ -40,7 +41,7 @@ pub async fn show_self(
 
     preload_map_configs(&mut server, &mut *conn).await?;
 
-    Ok(AppJson(server))
+    Ok(Json(server))
 }
 
 /// Updates the current server.
@@ -48,7 +49,7 @@ pub async fn update(
     auth: ServerAuthentication,
     State(state): State<AppState>,
     Payload(mut request): Payload<UpdateServerRequest>,
-) -> Result<AppJson<Server>, Error> {
+) -> Result<Json<Server>, Error> {
     let mut tx = state.db.begin().await.map_err(Error::new)?;
 
     let now = Utc::now();
@@ -149,7 +150,7 @@ pub async fn update(
 
     tx.commit().await.map_err(Error::new)?;
 
-    Ok(AppJson(server))
+    Ok(Json(server))
 }
 
 async fn preload_map_configs(

@@ -14,15 +14,15 @@ use garde::Validate;
 use serde::Deserialize;
 
 use crate::{
-    app::{AppForm, AppGarde, AppJson, AppState, Model, Payload},
+    app::{AppState, Model, ModelOrUnrated},
     auth::api_key::ServerAuthentication,
+    body::{Form, Json, Payload},
     error::{Error, ErrorKind},
     schema::user::{
-        UserBuilder, UserRow, get_user_by_short_id,
-        mmr::{self, init_rating},
-        preload_profiles,
+        UserBuilder, UserRow, get_user_by_short_id, mmr::init_rating, preload_profiles,
     },
     session::SessionUser,
+    validate::Valid,
 };
 
 /// A query for [`list`].
@@ -51,9 +51,9 @@ pub async fn create<T>(
     State(state): State<AppState>,
     Extension(model): Extension<Model<T>>,
     Payload(request): Payload<CreateUser>,
-) -> Result<AppJson<User>, Error>
+) -> Result<Json<User>, Error>
 where
-    T: mmr::Model + Send + Sync + 'static,
+    T: ModelOrUnrated,
 {
     let now = Utc::now();
 
@@ -94,14 +94,20 @@ where
         }
     }
 
-    // Initialize rating
-    let rating = init_rating(row.id, &model, &mut *tx).await?;
+    // Initialize rating if it's enabled
+    let mmr = match model.model() {
+        Some(model) => {
+            let rating = init_rating(row.id, model, &mut *tx).await?;
+            Some(rating.ordinal() as i32)
+        }
+        None => None,
+    };
 
     tx.commit().await?;
 
-    Ok(AppJson(User {
+    Ok(Json(User {
         profiles: Some(profiles),
-        mmr: Some(rating.ordinal() as i32),
+        mmr,
         ..User::from(&row)
     }))
 }
@@ -109,8 +115,8 @@ where
 /// Lists all users.
 pub async fn list(
     State(state): State<AppState>,
-    AppGarde(AppForm(query)): AppGarde<AppForm<ListUsersQuery>>,
-) -> Result<AppJson<Vec<User>>, Error> {
+    Valid(Form(query)): Valid<Form<ListUsersQuery>>,
+) -> Result<Json<Vec<User>>, Error> {
     let mut conn = state.db.acquire().await?;
 
     let users = sqlx::query_as::<_, UserRow>(
@@ -132,29 +138,29 @@ pub async fn list(
     .map(|u| User::from(u))
     .collect::<Vec<_>>();
 
-    Ok(AppJson(users))
+    Ok(Json(users))
 }
 
 /// Shows the currently authenticated user's details.
 pub async fn show_self(
     mut user: SessionUser,
     State(state): State<AppState>,
-) -> Result<AppJson<CurrentUser>, Error> {
+) -> Result<Json<CurrentUser>, Error> {
     let mut conn = state.db.acquire().await?;
 
     // The authenticated user can see their profiles
     preload_profiles(&mut user, &mut *conn).await?;
-    Ok(AppJson(user.into_inner()))
+    Ok(Json(user.into_inner()))
 }
 
 /// Shows information about a specific user.
 pub async fn show(
     Path((short_id,)): Path<(String,)>,
     State(state): State<AppState>,
-) -> Result<AppJson<User>, Error> {
+) -> Result<Json<User>, Error> {
     let mut conn = state.db.acquire().await?;
     match get_user_by_short_id(&short_id, &mut *conn).await? {
-        Some(user) => Ok(AppJson(User::from(user))),
+        Some(user) => Ok(Json(User::from(user))),
         None => Err(Error::not_found(format!(
             "user w/ id {} not found",
             short_id

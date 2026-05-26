@@ -20,7 +20,7 @@ use axum::{
 use axum_server::Handle;
 
 use duelchannel::{
-    app::{AppState, Model, Unrated},
+    app::{AppState, Model, ModelOrUnrated, Unrated},
     auth::oauth2::OauthState,
     cli::{self, Args, Command, MmrCommand, MmrDump},
     config::{Config, RatingModelConfig, StorageService, read_config},
@@ -110,8 +110,9 @@ async fn main() -> eyre::Result<()> {
 
 async fn with_rating_model<T>(cli: Args, mut config: Config, model: T) -> eyre::Result<()>
 where
-    T: Debug + Clone + Send + Sync + mmr::Model + 'static,
-    T::Data: Debug,
+    T: Debug + Clone + Send + Sync + ModelOrUnrated + 'static,
+    <T as ModelOrUnrated>::Model: Debug,
+    <T::Model as mmr::Model>::Data: Debug,
 {
     let database_url = config
         .server
@@ -188,9 +189,11 @@ where
                     .fetch_all(&mut *tx)
                     .await?;
 
-                for (id,) in player_ids {
-                    // init player rating
-                    init_rating(id, &model, &mut *tx).await?;
+                if let Some(model) = model.model() {
+                    for (id,) in player_ids {
+                        // init player rating
+                        init_rating(id, model, &mut *tx).await?;
+                    }
                 }
 
                 tx.commit().await?;
@@ -218,7 +221,9 @@ where
                     .await?;
                 }
 
-                dump_rating(std::io::stdout(), &model, &mut *tx).await?;
+                if let Some(model) = model.model() {
+                    dump_rating(std::io::stdout(), model, &mut *tx).await?;
+                }
 
                 // rollback transaction
                 tx.rollback().await?;
@@ -279,18 +284,15 @@ where
         .nest(
             "/matches",
             Router::<AppState>::new()
-                .route("/", get(routes::battle::list::<T>))
+                .route("/", get(routes::battle::list))
                 .route("/", post(routes::battle::create))
                 .nest(
                     "/{battle_id}",
                     Router::<AppState>::new()
-                        .route("/", get(routes::battle::show::<T>))
+                        .route("/", get(routes::battle::show))
                         .route("/", patch(routes::battle::update::<T>))
-                        .route(
-                            "/players/{short_id}",
-                            patch(routes::battle::player::update::<T>),
-                        )
-                        .route("/replay", post(routes::battle::replay::upload::<T>)),
+                        .route("/players/{short_id}", patch(routes::battle::player::update))
+                        .route("/replay", post(routes::battle::replay::upload)),
                 ),
         )
         .nest(

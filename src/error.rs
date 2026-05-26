@@ -23,7 +23,7 @@ use duelchannel_model::{ApiError, rrid::Rrid};
 
 use uuid::Uuid;
 
-use crate::app::AppJson;
+use crate::body::Json;
 
 /// Application error that may occur during the processing of a request.
 ///
@@ -401,7 +401,7 @@ impl IntoResponse for Error {
             self.to_status_and_api_error()
         };
 
-        let mut response = (status, AppJson(error)).into_response();
+        let mut response = (status, Json(error)).into_response();
         if let Some(error) = internal_error {
             response.extensions_mut().insert(Arc::new(error));
         }

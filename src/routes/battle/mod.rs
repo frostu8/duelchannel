@@ -34,13 +34,15 @@ use uuid::Uuid;
 use std::{collections::HashSet, fmt::Debug};
 
 use crate::{
-    app::{AppForm, AppGarde, AppJson, AppState, Model, Payload},
+    app::{AppState, Model, ModelOrUnrated},
     auth::api_key::ServerAuthentication,
+    body::{Form, Json, Payload},
     error::{Error, ErrorKind},
     schema::{
         battle::{BattleRow, get_replay_url, preload_participants, update_participant_ratings},
         user::{get_user_by_public_key, mmr},
     },
+    validate::Valid,
 };
 
 /// A query for [`list`].
@@ -61,15 +63,11 @@ fn list_battle_count_default() -> i32 {
 }
 
 /// Lists all matches.
-#[instrument(skip(state, model))]
-pub async fn list<T>(
-    Extension(model): Extension<Model<T>>,
+#[instrument(skip(state))]
+pub async fn list(
     State(state): State<AppState>,
-    AppGarde(AppForm(query)): AppGarde<AppForm<ListBattlesQuery>>,
-) -> Result<AppJson<Vec<Battle>>, Error>
-where
-    T: mmr::Model + 'static,
-{
+    Valid(Form(query)): Valid<Form<ListBattlesQuery>>,
+) -> Result<Json<Vec<Battle>>, Error> {
     let mut conn = state.db.acquire().await?;
 
     let rows = sqlx::query_as::<_, BattleRow>(
@@ -97,23 +95,19 @@ where
     for row in rows {
         let mut battle = Battle::from(&row);
         battle.replay_url = get_replay_url(&row, &state.config);
-        preload_participants(&mut battle, &model, &mut *conn).await?;
+        preload_participants(&mut battle, &mut *conn).await?;
         battles.push(battle);
     }
 
-    Ok(AppJson(battles))
+    Ok(Json(battles))
 }
 
 /// Shows an existing match.
-#[instrument(skip(state, model))]
-pub async fn show<T>(
+#[instrument(skip(state))]
+pub async fn show(
     Path((uuid,)): Path<(Uuid,)>,
-    Extension(model): Extension<Model<T>>,
     State(state): State<AppState>,
-) -> Result<AppJson<Battle>, Error>
-where
-    T: mmr::Model + 'static,
-{
+) -> Result<Json<Battle>, Error> {
     let mut conn = state.db.acquire().await?;
 
     let row = sqlx::query_as::<_, BattleRow>(
@@ -135,9 +129,9 @@ where
     let mut battle = Battle::from(&row);
 
     battle.replay_url = get_replay_url(&row, &state.config);
-    preload_participants(&mut battle, &model, &mut *conn).await?;
+    preload_participants(&mut battle, &mut *conn).await?;
 
-    Ok(AppJson(battle))
+    Ok(Json(battle))
 }
 
 async fn upsert_skin(skin: &Skin, conn: &mut SqliteConnection) -> Result<(), Error> {
@@ -168,7 +162,7 @@ pub async fn create(
     server_auth: ServerAuthentication,
     State(state): State<AppState>,
     Payload(request): Payload<CreateBattleRequest>,
-) -> Result<(StatusCode, AppJson<Battle>), Error> {
+) -> Result<(StatusCode, Json<Battle>), Error> {
     let now = Utc::now();
 
     let mut tx = state.db.begin().await?;
@@ -284,7 +278,7 @@ pub async fn create(
     let mut battle = Battle::from(schema);
     battle.participants = participants;
 
-    Ok((StatusCode::CREATED, AppJson(battle)))
+    Ok((StatusCode::CREATED, Json(battle)))
 }
 
 /// Updates a match.
@@ -295,10 +289,11 @@ pub async fn update<T>(
     Extension(model): Extension<Model<T>>,
     State(state): State<AppState>,
     Payload(request): Payload<UpdateBattleRequest>,
-) -> Result<AppJson<Battle>, Error>
+) -> Result<Json<Battle>, Error>
 where
-    T: Debug + mmr::Model + 'static,
-    T::Data: Debug,
+    T: ModelOrUnrated,
+    <T as ModelOrUnrated>::Model: mmr::Model + Debug,
+    <<T as ModelOrUnrated>::Model as mmr::Model>::Data: Debug,
 {
     let now = Utc::now();
 
@@ -382,19 +377,21 @@ where
     .execute(&mut *tx)
     .await?;
 
-    if request.status == Some(BattleStatus::Concluded)
-        || request.status == Some(BattleStatus::Cancelled)
-    {
-        update_participant_ratings(battle_query.id, &model, &mut *tx).await?;
+    if let Some(model) = model.model() {
+        if request.status == Some(BattleStatus::Concluded)
+            || request.status == Some(BattleStatus::Cancelled)
+        {
+            update_participant_ratings(battle_query.id, model, &mut *tx).await?;
+        }
     }
 
     // Create battle struct
     let mut battle = Battle::from(&battle_query);
 
     battle.replay_url = get_replay_url(&battle_query, &state.config);
-    preload_participants(&mut battle, &model, &mut *tx).await?;
+    preload_participants(&mut battle, &mut *tx).await?;
 
     tx.commit().await?;
 
-    Ok(AppJson(battle))
+    Ok(Json(battle))
 }

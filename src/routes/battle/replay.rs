@@ -2,10 +2,7 @@
 
 use std::io::Write;
 
-use axum::{
-    Extension,
-    extract::{Path, State},
-};
+use axum::extract::{Path, State};
 
 use bytes::Bytes;
 use futures_util::StreamExt as _;
@@ -17,29 +14,23 @@ use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 use crate::{
-    app::{AppJson, AppState, Model},
+    app::AppState,
     auth::api_key::ServerAuthentication,
+    body::Json,
     error::{Error, ErrorKind},
     multipart::Multipart,
-    schema::{
-        battle::{BattleRow, get_replay_url, preload_participants},
-        user::mmr,
-    },
+    schema::battle::{BattleRow, get_replay_url, preload_participants},
 };
 
 const MAX_REPLAY_SIZE: usize = 1024 * 1024 * 4;
 
 /// Accepts a replay.
-pub async fn upload<T>(
+pub async fn upload(
     _auth_guard: ServerAuthentication,
     Path((match_id,)): Path<(Uuid,)>,
     State(state): State<AppState>,
-    Extension(model): Extension<Model<T>>,
     mut multipart: Multipart,
-) -> Result<AppJson<Battle>, Error>
-where
-    T: mmr::Model + Send + Sync + 'static,
-{
+) -> Result<Json<Battle>, Error> {
     let mut tx = state.db.begin().await.map_err(Error::new)?;
 
     // Get associated battle
@@ -130,9 +121,9 @@ where
     let mut battle = Battle::from(&row);
 
     battle.replay_url = get_replay_url(&row, &state.config);
-    preload_participants(&mut battle, &model, &mut *tx).await?;
+    preload_participants(&mut battle, &mut *tx).await?;
 
     tx.commit().await.map_err(Error::new)?;
 
-    Ok(AppJson(battle))
+    Ok(Json(battle))
 }

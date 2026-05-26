@@ -13,7 +13,6 @@ use duelchannel_model::{
 use sqlx::{FromRow, SqliteConnection};
 
 use crate::{
-    app,
     config::Config,
     error::Error,
     schema::user::mmr::{Model, update_ratings},
@@ -200,15 +199,11 @@ impl From<&ParticipantRow> for Participant {
 }
 
 /// Fetches a single participant by their short_id.
-pub async fn get_participant_by_short_id<T>(
+pub async fn get_participant_by_short_id(
     battle_id: i32,
     short_id: &str,
-    _model: &app::Model<T>,
     conn: &mut SqliteConnection,
-) -> Result<Option<ParticipantRow>, Error>
-where
-    T: Model + 'static,
-{
+) -> Result<Option<ParticipantRow>, Error> {
     sqlx::query_as::<_, ParticipantRow>(
         r#"
         SELECT
@@ -242,14 +237,10 @@ where
 /// Preloads the `participants` field of a [`Battle`].
 ///
 /// If this function fails, `battle` will not be modified.
-pub async fn preload_participants<T>(
+pub async fn preload_participants(
     battle: &mut Battle,
-    _model: &app::Model<T>,
     conn: &mut SqliteConnection,
-) -> Result<(), Error>
-where
-    T: Model + 'static,
-{
+) -> Result<(), Error> {
     let participants = sqlx::query_as::<_, ParticipantRow>(
         r#"
         SELECT

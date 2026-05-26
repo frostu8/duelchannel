@@ -1,9 +1,6 @@
 //! Placement API.
 
-use axum::{
-    Extension,
-    extract::{Path, State},
-};
+use axum::extract::{Path, State};
 
 use duelchannel_model::{
     battle::{BattleStatus, Participant},
@@ -17,24 +14,21 @@ use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
-    app::{AppJson, AppState, Model, Payload},
+    app::AppState,
     auth::api_key::ServerAuthentication,
+    body::{Json, Payload},
     error::{Error, ErrorKind},
-    schema::{battle::get_participant_by_short_id, user::mmr},
+    schema::battle::get_participant_by_short_id,
 };
 
 /// Updates the placement of a player for a given match.
-#[instrument(skip(state, model))]
-pub async fn update<T>(
+#[instrument(skip(state))]
+pub async fn update(
     _auth_guard: ServerAuthentication,
     Path((uuid, short_id)): Path<(Uuid, String)>,
-    Extension(model): Extension<Model<T>>,
     State(state): State<AppState>,
     Payload(request): Payload<UpdatePlayerPlacementRequest>,
-) -> Result<AppJson<Participant>, Error>
-where
-    T: mmr::Model + 'static,
-{
+) -> Result<Json<Participant>, Error> {
     #[derive(FromRow)]
     struct BattleRow {
         id: i32,
@@ -66,7 +60,7 @@ where
     }
 
     // find the battle participant
-    let participant = get_participant_by_short_id(battle.id, &short_id, &model, &mut *tx).await?;
+    let participant = get_participant_by_short_id(battle.id, &short_id, &mut *tx).await?;
     let Some(mut participant) = participant else {
         // The player with that RRID does not exist.
         return Err(Error::not_found(format!(
@@ -94,5 +88,5 @@ where
 
     tx.commit().await?;
 
-    Ok(AppJson(participant.into()))
+    Ok(Json(participant.into()))
 }

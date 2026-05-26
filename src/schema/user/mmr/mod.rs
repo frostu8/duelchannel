@@ -48,6 +48,27 @@ pub trait Model: Send + Sync {
     fn period(&self) -> TimeDelta;
 }
 
+impl Model for ! {
+    type Data = ();
+
+    async fn create_rating(&self, _player_id: i32) -> Result<Rating<Self::Data>, Error> {
+        *self
+    }
+
+    async fn rate(
+        &self,
+        _rating: &RatingRecord<Self::Data>,
+        _matchups: &[Matchup<Self::Data>],
+        _period_elapsed: f32,
+    ) -> Result<Rating<Self::Data>, Error> {
+        *self
+    }
+
+    fn period(&self) -> TimeDelta {
+        *self
+    }
+}
+
 pub trait ModelData: Send + Sync + Sized + 'static {
     /// The ordinal of the rating.
     fn ordinal(rating: &Rating<Self>) -> f32 {
