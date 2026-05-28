@@ -30,6 +30,9 @@ pub struct CreateBattleParticipant {
     /// The player's skin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skin: Option<Skin>,
+    /// The name of the player's skin color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin_color: Option<String>,
 }
 
 /// Request to set the placement of a player.

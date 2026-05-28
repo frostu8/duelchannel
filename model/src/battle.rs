@@ -50,6 +50,10 @@ pub struct Participant {
     ///
     /// May not be present, for very old matches.
     pub skin: Option<Skin>,
+    /// The internal name of the player's skin color.
+    ///
+    /// May not be present, for older matches.
+    pub skin_color: Option<String>,
     /// The user participating.
     #[deref]
     pub user: User,

@@ -229,9 +229,10 @@ pub async fn create(
                 user_id,
                 name,
                 team,
-                skin
+                skin,
+                skin_color
             )
-            SELECT p.id, $2, $3, $4, $5, $6
+            SELECT p.id, $2, $3, $4, $5, $6, $7
             FROM profile p
             WHERE p.public_key = $1
             "#,
@@ -242,6 +243,7 @@ pub async fn create(
         .bind(&input_player.name)
         .bind(u8::from(input_player.team))
         .bind(input_player.skin.as_ref().map(|s| &s.name))
+        .bind(input_player.skin_color.as_ref())
         .execute(&mut *tx)
         .await?;
 
@@ -256,6 +258,7 @@ pub async fn create(
             finish_time: None,
             no_contest: false,
             skin: input_player.skin,
+            skin_color: input_player.skin_color,
         });
     }
 

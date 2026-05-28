@@ -160,6 +160,7 @@ pub struct ParticipantRow {
     pub team: PlayerTeam,
     pub finish_time: Option<i32>,
     pub no_contest: bool,
+    pub skin_color: Option<String>,
     // from player table
     pub short_id: String,
     pub display_name: String,
@@ -188,6 +189,7 @@ impl From<ParticipantRow> for Participant {
             finish_time: value.finish_time,
             no_contest: value.no_contest,
             skin: value.skin.into(),
+            skin_color: value.skin_color,
         }
     }
 }
