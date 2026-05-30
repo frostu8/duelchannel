@@ -49,6 +49,14 @@ where
     }
 }
 
+impl<T> HasValidate for Payload<T> {
+    type Validate = T;
+
+    fn get_validate(&self) -> &Self::Validate {
+        &self.0
+    }
+}
+
 /// App Form extractor and responder.
 #[derive(Deref, FromRequest)]
 #[from_request(via(axum::Form), rejection(Error))]

@@ -25,9 +25,31 @@ pub struct Server {
 pub struct MapConfig {
     /// The status of the map.
     pub status: BannedStatus,
+    /// A modified wincon for the map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub win_condition: Option<i32>,
+    /// A skill range the map config targets.
+    #[serde(default, skip_serializing_if = "SkillRange::is_all")]
+    pub skill_range: SkillRange,
     /// A user-defined note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+}
+
+/// A range of MMRs.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct SkillRange {
+    /// The lower bound of the range.
+    pub lower: Option<i32>,
+    /// The upper bound of the range.
+    pub upper: Option<i32>,
+}
+
+impl SkillRange {
+    /// Checks if the `SkillRange` represents all skills.
+    pub fn is_all(&self) -> bool {
+        self.lower.is_none() && self.upper.is_none()
+    }
 }
 
 /// A config for a specific map.

@@ -300,8 +300,9 @@ where
         .nest(
             "/servers",
             Router::<AppState>::new()
+                .route("/", get(routes::server::list))
                 .route("/~me", get(routes::server::show_self))
-                .route("/~me", patch(routes::server::update)),
+                .route("/~me", patch(routes::server::update_self)),
         )
         .nest(
             "/players",

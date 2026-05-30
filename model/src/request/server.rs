@@ -16,5 +16,5 @@ pub struct UpdateServerRequest {
     ///
     /// These are replaced as-is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bans: Option<HashMap<String, MapConfig>>,
+    pub maps: Option<HashMap<String, MapConfig>>,
 }

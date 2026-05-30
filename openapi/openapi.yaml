@@ -34,6 +34,18 @@ components:
       in: cookie
       name: id
   schemas:
+    BannedStatus:
+      type: integer
+      description: >
+        The status of a map ban.
+
+        * `0` **Blacklist**  
+          The map has been blacklisted from play.
+        * `1` **Whitelist**  
+          The map is able to be played.
+        * `2` **Suspect**  
+          The map is able to be played, but is currently under scrutiny.
+      enum: [0, 1, 2]
     CreateUser:
       type: object
       required:
@@ -136,6 +148,31 @@ components:
         finish_time:
           type: integer
           description: The finish time of the player, in game tics.
+    MapConfig:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          $ref: "#/components/schemas/BannedStatus"
+        win_condition:
+          type: integer
+          description: An alternate win condition for the map.
+        skill_range:
+          type: object
+          description: The skill range the map config targets.
+          properties:
+            lower:
+              type: integer
+            upper:
+              type: integer
+        note:
+          type: string
+          description: >
+            A human-readable note describing the circumstances of the map
+            config.
+
+            May have Markdown inside.
     Match:
       type: object
       required:
@@ -190,6 +227,23 @@ components:
           The match ended abnormally, either through the opponent leaving,
           anti-grief, or whatnot.
       enum: [0, 1, 2]
+    Server:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+          description: The unique identifier of the server.
+        name:
+          type: string
+          description: A human-readable name for the server.
+        maps:
+          type: object
+          description: A list of map configs.
+          additionalProperties:
+            $ref: "#/components/schemas/MapConfig"
     Skin:
       type: object
       required:
@@ -273,6 +327,17 @@ components:
 
             When a checkpoint is crossed in overtime, it increases the max
             speed of players.
+    UpdateServer:
+      type: object
+      properties:
+        name:
+          type: string
+          description: The new name of the server.
+        maps:
+          type: object
+          description: The full list of map configs to replace.
+          additionalProperties:
+            $ref: "#/components/schemas/MapConfig"
     Error:
       type: object
       description: >
@@ -342,6 +407,14 @@ components:
         team: 0
         finish_time: 36149
         no_contest: false
+    serverExample:
+      value:
+        id: 2
+        name: localhost
+        maps:
+          RR_ROBOTNIKCOASTER:
+            status: 1
+            note: Awesome map.
     userExample:
       value:
         id: GJBIJK
@@ -650,13 +723,13 @@ paths:
       description: >
         Fetches a list of players.
 
-        By default, this is sorted by ordinal
+        By default, this is sorted by ordinal.
       security: []
       operationId: list_players
       parameters:
         - name: count
           in: query
-          description: How many results to return
+          description: How many results to return.
           schema:
             type: integer
             minimum: 1
@@ -671,14 +744,13 @@ paths:
             pattern: '^[\dA-Fa-f]{64}$'
       responses:
         "200":
-          description: The users requested.
+          description: The players requested.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CurrentUser"
-              examples:
-                userExample:
-                  $ref: "#/components/examples/userExample"
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
         "400":
           description: >
             `count` is not in range, or the `public_key` provided was badly
@@ -779,3 +851,113 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /servers:
+    get:
+      tags:
+        - server
+      summary: List Servers
+      description: >
+        Gets a list of servers.
+      security: []
+      operationId: list_servers
+      parameters:
+        - name: count
+          in: query
+          description: How many results to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            example: 50
+      responses:
+        "200":
+          description: The servers.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Server"
+        "400":
+          description: >
+            A bad count was given.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /servers/~me:
+    get:
+      tags:
+        - server
+      summary: Get Current Server
+      description: >
+        Gets information about the currently authenticated server.
+      security:
+        - apiKey: []
+      operationId: get_current_server
+      responses:
+        "200":
+          description: The currently authenticated server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Server"
+              examples:
+                serverExample:
+                  $ref: "#/components/examples/serverExample"
+        "401":
+          description: Client is unauthenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                apiKeyUnauthenticatedExample:
+                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
+    patch:
+      tags:
+        - server
+      summary: Update Current Server
+      description: >
+        Sets information about the currently authenticated server.
+      security:
+        - apiKey: []
+      operationId: update_current_server
+      requestBody:
+        description: The new server changes.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateServer"
+            examples:
+              updateServerExample:
+                value:
+                  name: New Name
+                  maps:
+                    RR_CHAOSCHUTE:
+                      status: 0
+                      skill_range:
+                        lower: 2000
+                      note: Evil.
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/UpdateServer"
+      responses:
+        "200":
+          description: The updated server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Server"
+              examples:
+                serverExample:
+                  $ref: "#/components/examples/serverExample"
+        "401":
+          description: Client is unauthenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                apiKeyUnauthenticatedExample:
+                  $ref: "#/components/examples/apiKeyUnauthenticatedExample"
