@@ -23,6 +23,8 @@ pub struct Server {
 /// A config for a specific map.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct MapConfig {
+    /// The title of the map.
+    pub title: String,
     /// The status of the map.
     pub status: BannedStatus,
     /// A modified wincon for the map.

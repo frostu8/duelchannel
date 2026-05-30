@@ -151,8 +151,12 @@ components:
     MapConfig:
       type: object
       required:
+        - title
         - status
       properties:
+        title:
+          type: string
+          description: The map title.
         status:
           $ref: "#/components/schemas/BannedStatus"
         win_condition:

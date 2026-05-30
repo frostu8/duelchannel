@@ -1,0 +1,2 @@
+DELETE FROM map_config;
+ALTER TABLE map_config ADD COLUMN title VARCHAR(255) NOT NULL;

@@ -39,6 +39,9 @@ pub struct UpdateServerRequest {
 #[derive(Clone, Debug, Deserialize, Validate)]
 #[garde(context(AppState as state))]
 pub struct UpdateMapConfig {
+    /// The title of the map.
+    #[garde(length(min = 1, max = 255))]
+    pub title: String,
     /// The status of the map.
     #[garde(skip)]
     pub status: BannedStatus,
@@ -59,6 +62,7 @@ pub struct UpdateMapConfig {
 impl From<UpdateMapConfig> for MapConfig {
     fn from(value: UpdateMapConfig) -> Self {
         MapConfig {
+            title: value.title,
             status: value.status,
             win_condition: value.win_condition,
             skill_range: duelchannel_model::server::SkillRange {
@@ -104,6 +108,7 @@ struct ServerRow {
 #[derive(FromRow)]
 struct MapConfigQuery {
     pub lumpname: String,
+    pub title: String,
     #[sqlx(try_from = "u8")]
     pub status: BannedStatus,
     pub note: Option<String>,
@@ -220,7 +225,8 @@ pub async fn update_self(
                             note = $5,
                             win_condition = $6,
                             skill_lower = $7,
-                            skill_upper = $8
+                            skill_upper = $8,
+                            title = $9
                         WHERE lumpname = $2 AND parent_id = $3
                         "#,
                     )
@@ -232,6 +238,7 @@ pub async fn update_self(
                     .bind(config.win_condition)
                     .bind(config.skill_range.lower)
                     .bind(config.skill_range.upper)
+                    .bind(&config.title)
                     .execute(&mut *tx)
                     .await
                     .map_err(Error::new)?;
@@ -240,8 +247,8 @@ pub async fn update_self(
                 // This is a fresh ban
                 sqlx::query(
                     r#"
-                    INSERT INTO map_config (parent_id, lumpname, status, note, inserted_at, updated_at)
-                    VALUES ($2, $3, $4, $5, $1, $1)
+                    INSERT INTO map_config (parent_id, lumpname, status, note, win_condition, skill_lower, skill_upper, title, inserted_at, updated_at)
+                    VALUES ($2, $3, $4, $5, $6, $7, $8, $9, $1, $1)
                     "#
                 )
                 .bind(now)
@@ -249,6 +256,10 @@ pub async fn update_self(
                 .bind(&lumpname)
                 .bind(u8::from(config.status))
                 .bind(config.note.as_ref())
+                .bind(config.win_condition)
+                .bind(config.skill_range.lower)
+                .bind(config.skill_range.upper)
+                .bind(&config.title)
                 .execute(&mut *tx)
                 .await
                 .map_err(Error::new)?;
@@ -307,6 +318,7 @@ async fn preload_map_configs(
         server.maps.insert(
             row.lumpname,
             MapConfig {
+                title: row.title,
                 status: row.status,
                 note: row.note,
                 win_condition: row.win_condition,
