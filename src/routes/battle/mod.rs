@@ -386,14 +386,16 @@ where
         UPDATE
             battle
         SET
-            status = IFNULL($2, status),
-            concluded_at = IFNULL($3, concluded_at),
-            margin_score = IFNULL($4, margin_score)
+            updated_at = $2,
+            status = IFNULL($3, status),
+            concluded_at = IFNULL($4, concluded_at),
+            margin_score = IFNULL($5, margin_score)
         WHERE
             id = $1
         "#,
     )
     .bind(battle_query.id)
+    .bind(now)
     .bind(request.status.map(|s| u8::from(s)))
     .bind(set_concluded)
     .bind(request.margin_score)
@@ -428,12 +430,14 @@ where
     Ok(Json(battle))
 }
 
+#[instrument(skip(model, db))]
 async fn flush_analytics<T>(battle_id: i32, model: &Model<T>, db: SqlitePool) -> Result<(), Error>
 where
     T: ModelOrUnrated,
     <T as ModelOrUnrated>::Model: mmr::Model + Debug,
     <<T as ModelOrUnrated>::Model as mmr::Model>::Data: Debug + Clone,
 {
+    tracing::debug!("flushing analytics");
     let mut conn = db.acquire().await?;
     get_analytics(battle_id, model, &mut *conn).await?;
     Ok(())

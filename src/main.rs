@@ -300,7 +300,7 @@ where
             "/matches",
             Router::<AppState>::new()
                 .route("/", get(routes::battle::list))
-                .route("/", post(routes::battle::create))
+                .route("/", post(routes::battle::create::<T>))
                 .route("/analytics", get(routes::battle::analytics::show))
                 .nest(
                     "/{battle_id}",
