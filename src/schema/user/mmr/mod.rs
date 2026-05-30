@@ -44,6 +44,12 @@ pub trait Model: Send + Sync {
         period_elapsed: f32,
     ) -> impl Future<Output = Result<Rating<Self::Data>, Error>> + Send + Sync;
 
+    /// Gets the quality of a match, assuming each player is on their own team.
+    fn quality(
+        &self,
+        players: &[RatingRecord<Self::Data>],
+    ) -> impl Future<Output = Result<f32, Error>> + Send + Sync;
+
     /// The time between rating periods.
     fn period(&self) -> TimeDelta;
 }
@@ -61,6 +67,10 @@ impl Model for ! {
         _matchups: &[Matchup<Self::Data>],
         _period_elapsed: f32,
     ) -> Result<Rating<Self::Data>, Error> {
+        *self
+    }
+
+    async fn quality(&self, _players: &[RatingRecord<Self::Data>]) -> Result<f32, Error> {
         *self
     }
 

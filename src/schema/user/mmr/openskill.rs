@@ -102,6 +102,20 @@ impl Model for OpenSkill {
         }
     }
 
+    async fn quality(&self, players: &[RatingRecord<Self::Data>]) -> Result<f32, Error> {
+        let mut process = self.process.write().await;
+
+        let data = process
+            .request(QualityRequest {
+                players: players.iter().cloned().map(Rating::from).collect(),
+            })
+            .await?;
+        match data {
+            Response::Quality(resp) => Ok(resp.quality),
+            _ => Err(Error::new(UnexpectedResponse)),
+        }
+    }
+
     fn period(&self) -> chrono::TimeDelta {
         self.config.period
     }
@@ -133,6 +147,7 @@ impl ModelData for OpenSkillData {
 pub enum Request {
     UpdateConfig(UpdateConfigRequest),
     CreateRating(CreateRatingRequest),
+    Quality(QualityRequest),
     Rate(RateRequest),
 }
 
@@ -142,6 +157,7 @@ pub enum Request {
 pub enum Response {
     UpdateConfig(UpdateConfigResponse),
     CreateRating(CreateRatingResponse),
+    Quality(QualityResponse),
     Rate(RateResponse),
 }
 
@@ -177,6 +193,24 @@ impl From<CreateRatingRequest> for Request {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CreateRatingResponse {
     pub rating: OpenSkillRating,
+}
+
+/// A request to [`Model::quality`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct QualityRequest {
+    pub players: Vec<OpenSkillRating>,
+}
+
+impl From<QualityRequest> for Request {
+    fn from(value: QualityRequest) -> Self {
+        Request::Quality(value)
+    }
+}
+
+/// A response to [`Model::quality`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct QualityResponse {
+    pub quality: f32,
 }
 
 /// A request to [`Model::rate`].

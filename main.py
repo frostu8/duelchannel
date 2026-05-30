@@ -121,6 +121,16 @@ def run():
                     "type": "CreateRating",
                     "rating": asdict(Rating.frommodel(rating)),
                 }
+            case "Quality":
+                ratings = [[from_dict(Rating, d).tomodel()] for d in data["players"]]
+
+                quality_inv = sum([(num*2-1)**2 for num in model.predict_win(ratings)]) / len(ratings)
+                quality = 1 - quality_inv
+
+                resp = {
+                    "type": "Quality",
+                    "quality": quality,
+                }
             case "Rate":
                 rating = from_dict(RatingRecord, data["rating"])
                 matchups = [from_dict(Matchup, d) for d in data["matchups"]]

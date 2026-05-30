@@ -22,7 +22,7 @@ use axum_server::Handle;
 use duelchannel::{
     app::{AppState, Model, ModelOrUnrated, Unrated},
     auth::oauth2::OauthState,
-    cli::{self, Args, Command, MmrCommand, MmrDump},
+    cli::{self, AnalyticsCommand, Args, Command, MmrCommand, MmrDump},
     config::{Config, RatingModelConfig, StorageService, read_config},
     error::Error,
     routes,
@@ -114,7 +114,7 @@ async fn with_rating_model<T>(cli: Args, mut config: Config, model: T) -> eyre::
 where
     T: Debug + Clone + Send + Sync + ModelOrUnrated + 'static,
     <T as ModelOrUnrated>::Model: Debug,
-    <T::Model as mmr::Model>::Data: Debug,
+    <T::Model as mmr::Model>::Data: Debug + Clone,
 {
     let database_url = config
         .server
@@ -152,6 +152,8 @@ where
         }
     };
 
+    let app_model = Model::new(model.clone());
+
     // Run any pending commands
     if let Some(command) = cli.command.as_ref() {
         match command {
@@ -164,6 +166,17 @@ where
                 cli::register_server(server, &mut *tx).await?;
 
                 tx.commit().await?;
+            }
+            Command::Analytics(
+                analytics @ cli::Analytics {
+                    command: Some(AnalyticsCommand::Battle(_)),
+                    ..
+                },
+            ) => {
+                cli::run_battle_analytics(&analytics, &app_model, &db).await?;
+            }
+            Command::Analytics(cli::Analytics { command: None, .. }) => {
+                Args::command().print_help().unwrap();
             }
             Command::GenerateKey(_) => {
                 tracing::info!("generated! set ENCRYPTION_KEY or server.encryption_key on boot");
@@ -288,6 +301,7 @@ where
             Router::<AppState>::new()
                 .route("/", get(routes::battle::list))
                 .route("/", post(routes::battle::create))
+                .route("/analytics", get(routes::battle::analytics::show))
                 .nest(
                     "/{battle_id}",
                     Router::<AppState>::new()
@@ -361,7 +375,7 @@ where
                         .allow_origin(Any),
                 ),
         )
-        .layer(Extension(Model::new(model.clone())))
+        .layer(Extension(app_model))
         .layer(session_layer)
         .layer(
             TraceLayer::new_for_http()

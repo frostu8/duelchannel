@@ -1,5 +1,6 @@
 //! Match management routes.
 
+pub mod analytics;
 pub mod player;
 pub mod replay;
 
@@ -25,7 +26,7 @@ use http::StatusCode;
 
 use serde::Deserialize;
 
-use sqlx::SqliteConnection;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use tracing::instrument;
 
@@ -39,7 +40,10 @@ use crate::{
     body::{Form, Json, Payload},
     error::{Error, ErrorKind},
     schema::{
-        battle::{BattleRow, get_replay_url, preload_participants, update_participant_ratings},
+        battle::{
+            BattleRow, analytics::get_analytics, get_replay_url, preload_participants,
+            update_participant_ratings,
+        },
         user::{get_user_by_public_key, mmr},
     },
     validate::Valid,
@@ -157,12 +161,18 @@ async fn upsert_skin(skin: &Skin, conn: &mut SqliteConnection) -> Result<(), Err
 }
 
 /// Creates a match.
-#[instrument(skip(state))]
-pub async fn create(
+#[instrument(skip(state, model))]
+pub async fn create<T>(
     server_auth: ServerAuthentication,
+    Extension(model): Extension<Model<T>>,
     State(state): State<AppState>,
     Payload(request): Payload<CreateBattleRequest>,
-) -> Result<(StatusCode, Json<Battle>), Error> {
+) -> Result<(StatusCode, Json<Battle>), Error>
+where
+    T: ModelOrUnrated + Clone + Send + Sync,
+    <T as ModelOrUnrated>::Model: mmr::Model + Debug,
+    <<T as ModelOrUnrated>::Model as mmr::Model>::Data: Debug + Clone,
+{
     let now = Utc::now();
 
     let mut tx = state.db.begin().await?;
@@ -281,6 +291,15 @@ pub async fn create(
     let mut battle = Battle::from(schema);
     battle.participants = participants;
 
+    // Commit analytics
+    let db_clone = state.db.clone();
+    let model_clone = model.clone();
+    tokio::spawn(async move {
+        if let Err(err) = flush_analytics(match_id, &model_clone, db_clone).await {
+            tracing::error!("got error flushing analytics: {}", err);
+        }
+    });
+
     Ok((StatusCode::CREATED, Json(battle)))
 }
 
@@ -294,9 +313,9 @@ pub async fn update<T>(
     Payload(request): Payload<UpdateBattleRequest>,
 ) -> Result<Json<Battle>, Error>
 where
-    T: ModelOrUnrated,
+    T: ModelOrUnrated + Clone + Send + Sync,
     <T as ModelOrUnrated>::Model: mmr::Model + Debug,
-    <<T as ModelOrUnrated>::Model as mmr::Model>::Data: Debug,
+    <<T as ModelOrUnrated>::Model as mmr::Model>::Data: Debug + Clone,
 {
     let now = Utc::now();
 
@@ -316,6 +335,7 @@ where
     let Some(mut battle_query) = battle_query else {
         return Err(Error::not_found(format!("Match {} not found", uuid)));
     };
+    let battle_id = battle_query.id;
 
     // Verify changes
     let is_status_changed = request
@@ -396,5 +416,25 @@ where
 
     tx.commit().await?;
 
+    // Commit analytics
+    let db_clone = state.db.clone();
+    let model_clone = model.clone();
+    tokio::spawn(async move {
+        if let Err(err) = flush_analytics(battle_id, &model_clone, db_clone).await {
+            tracing::error!("got error flushing analytics: {}", err);
+        }
+    });
+
     Ok(Json(battle))
+}
+
+async fn flush_analytics<T>(battle_id: i32, model: &Model<T>, db: SqlitePool) -> Result<(), Error>
+where
+    T: ModelOrUnrated,
+    <T as ModelOrUnrated>::Model: mmr::Model + Debug,
+    <<T as ModelOrUnrated>::Model as mmr::Model>::Data: Debug + Clone,
+{
+    let mut conn = db.acquire().await?;
+    get_analytics(battle_id, model, &mut *conn).await?;
+    Ok(())
 }

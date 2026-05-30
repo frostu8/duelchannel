@@ -1,5 +1,7 @@
 //! Battle functions and utilities.
 
+pub mod analytics;
+
 use std::fmt::Debug;
 
 use chrono::{DateTime, Utc};

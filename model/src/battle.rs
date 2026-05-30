@@ -106,3 +106,41 @@ pub enum PlayerTeam {
     /// Player 2 is on this team.
     Blue = 1,
 }
+
+/// A compact representation of a match meant to convey some statistics.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BattlePoint {
+    /// The ID of the battle.
+    pub id: String,
+    /// The name of the level the battle took place on.
+    pub level_name: String,
+    /// The margin score of the battle.
+    pub margin_score: Option<i32>,
+    /// The statistics of the battle.
+    #[serde(flatten)]
+    pub statistics: BattleStatistics,
+}
+
+/// The statistics of a battle.
+///
+/// A single battle can be represented as a single point in n-dimensional
+/// space.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BattleStatistics {
+    /// The average MMR of the match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_mmr: Option<i32>,
+    /// The match quality.
+    ///
+    /// Lower numbers are better.
+    pub quality: Option<f32>,
+    /// The finish time of the match.
+    pub finish_time: Option<i32>,
+}
+
+impl BattleStatistics {
+    /// Checks if the statistics are empty.
+    pub fn is_empty(&self) -> bool {
+        self.avg_mmr.is_none() && self.quality.is_none() && self.finish_time.is_none()
+    }
+}

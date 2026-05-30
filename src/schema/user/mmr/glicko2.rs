@@ -68,6 +68,10 @@ impl Model for Glicko2 {
         Ok(rate(&self.config, rating, &matchups, period_elapsed))
     }
 
+    async fn quality(&self, _players: &[RatingRecord<Self::Data>]) -> Result<f32, Error> {
+        todo!()
+    }
+
     fn period(&self) -> TimeDelta {
         self.config.period
     }
