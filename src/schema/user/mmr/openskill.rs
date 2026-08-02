@@ -2,8 +2,13 @@
 
 use std::{
     fmt::{self, Debug, Display, Formatter},
+    num::NonZeroUsize,
     process::Stdio,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Instant,
 };
 
 use chrono::TimeDelta;
@@ -12,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
-    sync::RwLock,
+    sync::{mpsc, oneshot},
 };
 
 use crate::error::Error;
@@ -26,46 +31,45 @@ pub type OpenSkillRatingRecord = RatingRecord<OpenSkillData>;
 #[derive(Clone)]
 pub struct OpenSkill {
     config: Arc<OpenSkillConfig>,
-    process: Arc<RwLock<Process>>,
+    workers: Arc<Vec<ProcessHandle>>,
+    next_worker: Arc<AtomicUsize>,
 }
 
 impl OpenSkill {
     /// Creates a new `OpenSkill` interface.
     pub async fn new(config: OpenSkillConfig) -> eyre::Result<OpenSkill> {
-        let command_parts = config
-            .command
-            .split(char::is_whitespace)
-            .collect::<Vec<&str>>();
+        // Figure out how many cores to spawn.
+        let worker_count = config
+            .worker_count
+            .map(|s| s.get())
+            .unwrap_or_else(num_cpus::get);
 
-        // Start a process
-        let mut child = Command::new(command_parts[0])
-            .args(&command_parts[1..])
-            .stderr(Stdio::inherit())
-            .stdout(Stdio::piped())
-            .stdin(Stdio::piped())
-            .spawn()?;
+        assert!(worker_count > 0);
 
-        let mut process = Process {
-            stdin: child.stdin.take().ok_or_eyre("no stdin exposed")?,
-            stdout: child
-                .stdout
-                .take()
-                .map(BufReader::new)
-                .ok_or_eyre("no stdout exposed")?,
-            _child: child,
-        };
+        let mut workers = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let handle = ProcessHandle::spawn(&config.command)?;
+            // Initialize worker with config
+            let _ = handle
+                .request(UpdateConfigRequest {
+                    config: config.clone(),
+                })
+                .await?;
 
-        // Send update config
-        let _ = process
-            .request(UpdateConfigRequest {
-                config: config.clone(),
-            })
-            .await?;
+            workers.push(handle);
+        }
 
         Ok(OpenSkill {
             config: Arc::new(config),
-            process: Arc::new(RwLock::new(process)),
+            workers: Arc::new(workers),
+            next_worker: Arc::new(AtomicUsize::new(0)),
         })
+    }
+
+    /// Finds the next worker to use.
+    fn next_worker(&self) -> &ProcessHandle {
+        let idx = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.workers.len();
+        &self.workers[idx]
     }
 }
 
@@ -73,9 +77,10 @@ impl Model for OpenSkill {
     type Data = OpenSkillData;
 
     async fn create_rating(&self, user_id: i32) -> Result<Rating<Self::Data>, Error> {
-        let mut process = self.process.write().await;
-
-        let data = process.request(CreateRatingRequest { user_id }).await?;
+        let data = self
+            .next_worker()
+            .request(CreateRatingRequest { user_id })
+            .await?;
         match data {
             Response::CreateRating(resp) => Ok(resp.rating),
             _ => Err(Error::new(UnexpectedResponse)),
@@ -88,9 +93,8 @@ impl Model for OpenSkill {
         matchups: &[Matchup<Self::Data>],
         _period_elapsed: f32,
     ) -> Result<Rating<Self::Data>, Error> {
-        let mut process = self.process.write().await;
-
-        let data = process
+        let data = self
+            .next_worker()
             .request(RateRequest {
                 rating: rating.clone(),
                 matchups: matchups.to_owned(),
@@ -103,9 +107,8 @@ impl Model for OpenSkill {
     }
 
     async fn quality(&self, players: &[RatingRecord<Self::Data>]) -> Result<f32, Error> {
-        let mut process = self.process.write().await;
-
-        let data = process
+        let data = self
+            .next_worker()
             .request(QualityRequest {
                 players: players.iter().cloned().map(Rating::from).collect(),
             })
@@ -132,7 +135,7 @@ impl Debug for OpenSkill {
 /// Does nothing but cache the ordinal.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OpenSkillData {
-    ordinal: f32,
+    pub ordinal: f32,
 }
 
 impl ModelData for OpenSkillData {
@@ -149,6 +152,17 @@ pub enum Request {
     CreateRating(CreateRatingRequest),
     Quality(QualityRequest),
     Rate(RateRequest),
+}
+
+impl Request {
+    fn variant_name(&self) -> &'static str {
+        match self {
+            Request::UpdateConfig(_) => "UpdateConfig",
+            Request::CreateRating(_) => "CreateRating",
+            Request::Quality(_) => "Quality",
+            Request::Rate(_) => "Rate",
+        }
+    }
 }
 
 /// A response.
@@ -243,6 +257,93 @@ impl Display for UnexpectedResponse {
 
 impl std::error::Error for UnexpectedResponse {}
 
+/// An error returned when the open skill worker process has terminated.
+#[derive(Clone, Copy, Debug)]
+pub struct ProcessTerminated;
+
+impl Display for ProcessTerminated {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("open skill worker process terminated")
+    }
+}
+
+impl std::error::Error for ProcessTerminated {}
+
+type Job = (Request, oneshot::Sender<Result<Response, Error>>);
+
+#[derive(Clone)]
+struct ProcessHandle {
+    tx: mpsc::Sender<Job>,
+}
+
+impl ProcessHandle {
+    /// Spawns a worker.
+    fn spawn(command: &str) -> eyre::Result<ProcessHandle> {
+        let command_parts = command.split(char::is_whitespace).collect::<Vec<&str>>();
+        // Start a process
+        let mut child = Command::new(command_parts[0])
+            .args(&command_parts[1..])
+            .stderr(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .stdin(Stdio::piped())
+            .spawn()?;
+        let process = Process {
+            stdin: child.stdin.take().ok_or_eyre("no stdin exposed")?,
+            stdout: child
+                .stdout
+                .take()
+                .map(BufReader::new)
+                .ok_or_eyre("no stdout exposed")?,
+            _child: child,
+        };
+        let (tx, rx) = mpsc::channel(32);
+        tokio::spawn(run_process(process, rx));
+        Ok(ProcessHandle { tx })
+    }
+
+    /// Sends a request to the worker and awaits its response.
+    async fn request<T>(&self, request: T) -> Result<Response, Error>
+    where
+        T: Into<Request>,
+    {
+        let request = request.into();
+        let kind = request.variant_name();
+
+        // Time request
+        let start = Instant::now();
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send((request, reply_tx))
+            .await
+            .map_err(|_| Error::new(ProcessTerminated))?;
+
+        let result = reply_rx.await.map_err(|_| Error::new(ProcessTerminated))?;
+
+        tracing::debug!(
+            request = kind,
+            elapsed_ms = start.elapsed().as_secs_f64() * 1000.0,
+            "openskill request completed"
+        );
+        result
+    }
+}
+
+async fn run_process(mut process: Process, mut rx: mpsc::Receiver<Job>) {
+    while let Some((request, reply)) = rx.recv().await {
+        match process.request(request).await {
+            Ok(response) => {
+                let _ = reply.send(Ok(response));
+            }
+            Err(e) => {
+                let _ = reply.send(Err(e));
+                tracing::warn!("open skill worker failed, driver task exiting");
+                return;
+            }
+        }
+    }
+}
+
 struct Process {
     _child: Child,
     stdin: ChildStdin,
@@ -251,12 +352,7 @@ struct Process {
 
 impl Process {
     /// Sends a request and gets a response back.
-    pub async fn request<T>(&mut self, request: T) -> Result<Response, Error>
-    where
-        T: Into<Request>,
-    {
-        let request = request.into();
-
+    pub async fn request(&mut self, request: Request) -> Result<Response, Error> {
         // Serialize request
         let mut body = serde_json::to_string(&request).map_err(Error::new)?;
         body.push('\n');
@@ -288,6 +384,10 @@ pub struct OpenSkillConfig {
     pub period: TimeDelta,
     /// The command to start the open skill process.
     pub command: String,
+    /// The amount of workers to spawn.
+    ///
+    /// If unspecified, defaults to the number of cores.
+    pub worker_count: Option<NonZeroUsize>,
     /// Prevents deviation from getting too small.
     pub tau: f32,
     /// Default settings for new players.
@@ -309,6 +409,7 @@ impl Default for OpenSkillConfig {
         OpenSkillConfig {
             period: TimeDelta::seconds(86_400),
             command: "uv run main.py".into(),
+            worker_count: None,
             tau: 25.0 / 300.0,
             defaults: InitialRating::default(),
         }
@@ -328,6 +429,88 @@ impl Default for InitialRating {
         InitialRating {
             rating: 25.0,
             deviation: 25.0 / 3.0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use chrono::Utc;
+    use duelchannel_model::battle::BattleStatus;
+
+    fn make_record(user_id: i32, rating: f32, deviation: f32) -> RatingRecord<OpenSkillData> {
+        RatingRecord {
+            user_id,
+            period_id: 0,
+            rating,
+            deviation,
+            extra: OpenSkillData {
+                ordinal: rating - 3.0 * deviation,
+            },
+            inserted_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn openskill_round_trip() {
+        let model = OpenSkill::new(OpenSkillConfig::default())
+            .await
+            .expect("model to run");
+
+        let rating = model.create_rating(1).await.expect("rating to be created");
+        assert_eq!(rating.user_id, 1);
+        assert!((rating.rating - 25.0).abs() < 1e-4, "mu default");
+        assert!(
+            (rating.deviation - 25.0 / 3.0).abs() < 1e-4,
+            "sigma default"
+        );
+
+        let p1 = make_record(1, 25.0, 25.0 / 3.0);
+        let p2 = make_record(2, 25.0, 25.0 / 3.0);
+        let quality = model
+            .quality(&[p1.clone(), p2.clone()])
+            .await
+            .expect("model rating quality");
+        assert!(
+            (quality - 1.0).abs() < 1e-3,
+            "even match quality, got {quality}"
+        );
+
+        let matchup = Matchup {
+            opponent: p2.clone(),
+            status: BattleStatus::Concluded,
+            position: 1,
+            finish_time: 3000,
+            no_contest: false,
+        };
+        let winner = model.rate(&p1, &[matchup], 0.0).await.expect("rating");
+        assert!(
+            winner.rating > p1.rating,
+            "winner mu should increase: {} -> {}",
+            p1.rating,
+            winner.rating
+        );
+    }
+
+    #[tokio::test]
+    async fn openskill_concurrent_requests() {
+        let model = OpenSkill::new(OpenSkillConfig::default())
+            .await
+            .expect("model to run");
+
+        // Run many requests
+        let mut handles = Vec::new();
+        for i in 0..32 {
+            let model = model.clone();
+            handles.push(tokio::spawn(async move { model.create_rating(i).await }));
+        }
+
+        for (i, h) in handles.into_iter().enumerate() {
+            let rating = h.await.unwrap().expect("rating to be created");
+            assert_eq!(rating.user_id, i as i32);
         }
     }
 }

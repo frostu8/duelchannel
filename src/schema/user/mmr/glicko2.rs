@@ -385,6 +385,7 @@ mod tests {
             rating: 1500.0,
             deviation: 350.0,
             inserted_at: Utc::now(),
+            updated_at: Utc::now(),
             extra: Glicko2Data { volatility: 0.06 },
         }
     }
