@@ -408,7 +408,7 @@ impl Default for OpenSkillConfig {
     fn default() -> Self {
         OpenSkillConfig {
             period: TimeDelta::seconds(86_400),
-            command: "uv run main.py".into(),
+            command: "uv run --package duelchannel-worker worker/main.py".into(),
             worker_count: None,
             tau: 25.0 / 300.0,
             defaults: InitialRating::default(),

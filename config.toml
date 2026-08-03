@@ -12,7 +12,7 @@ region = "us-east-2"
 
 [mmr]
 model = "openskill"
-command = "uv run main.py"
+command = "uv run --package duelchannel-worker worker/main.py"
 worker_count = 4
 tau = 0.08333333333
 defaults.rating = 25

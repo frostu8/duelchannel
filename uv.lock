@@ -2,6 +2,11 @@ version = 1
 revision = 3
 requires-python = ">=3.14"
 
+[manifest]
+members = [
+    "duelchannel-worker",
+]
+
 [[package]]
 name = "dacite"
 version = "1.9.2"
@@ -12,18 +17,9 @@ wheels = [
 ]
 
 [[package]]
-name = "openskill"
-version = "6.2.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d8/fb/1ce1702a8677729cde83cb7f5924953c0704e95620898d991711a0dc57e4/openskill-6.2.0.tar.gz", hash = "sha256:817c5192aaed489697a1703fc2a3f9ea84b4487b09d0c27fd270a04f08f13d67", size = 47848, upload-time = "2026-01-11T16:49:15.249Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/11/2e0981f11153a06f6a6c7ae5bd84977e76c0e510af2d629288d4d5bdf81d/openskill-6.2.0-py3-none-any.whl", hash = "sha256:7c9cf8447181a5402793afe9230058ae1091ceb7fc0364b9ab3eb51e9eac1ac9", size = 48417, upload-time = "2026-01-11T16:49:14.274Z" },
-]
-
-[[package]]
-name = "openskillmodel"
+name = "duelchannel-worker"
 version = "0.1.0"
-source = { virtual = "." }
+source = { virtual = "worker" }
 dependencies = [
     { name = "dacite" },
     { name = "openskill" },
@@ -33,4 +29,13 @@ dependencies = [
 requires-dist = [
     { name = "dacite", specifier = ">=1.9.2" },
     { name = "openskill", specifier = ">=6.2.0" },
+]
+
+[[package]]
+name = "openskill"
+version = "6.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/fb/1ce1702a8677729cde83cb7f5924953c0704e95620898d991711a0dc57e4/openskill-6.2.0.tar.gz", hash = "sha256:817c5192aaed489697a1703fc2a3f9ea84b4487b09d0c27fd270a04f08f13d67", size = 47848, upload-time = "2026-01-11T16:49:15.249Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/11/2e0981f11153a06f6a6c7ae5bd84977e76c0e510af2d629288d4d5bdf81d/openskill-6.2.0-py3-none-any.whl", hash = "sha256:7c9cf8447181a5402793afe9230058ae1091ceb7fc0364b9ab3eb51e9eac1ac9", size = 48417, upload-time = "2026-01-11T16:49:14.274Z" },
 ]
