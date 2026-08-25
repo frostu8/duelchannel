@@ -7,9 +7,9 @@ use futures_util::StreamExt as _;
 use sqlx::{FromRow, SqliteConnection};
 
 use crate::{
-    app::{Model, ModelOrUnrated},
+    entity::user::mmr::{RatingEntity, RatingService},
     error::Error,
-    entity::user::mmr::{self, Model as _, Rating, RatingRecord, RatingRow},
+    mmr::{Rating, RatingModel},
 };
 
 /// A set of analytics for a battle.
@@ -74,12 +74,11 @@ pub fn stream_analytics(
 /// calculates them.
 pub async fn get_analytics<T>(
     battle_id: i32,
-    model: &Model<T>,
+    model: &T,
     conn: &mut SqliteConnection,
 ) -> Result<BattleStatistics, Error>
 where
-    T: ModelOrUnrated,
-    <T::Model as mmr::Model>::Data: Clone,
+    T: RatingService,
 {
     #[derive(FromRow)]
     struct BattleRow {
@@ -159,21 +158,23 @@ where
 /// Calculates a set of analytics for a battle.
 pub async fn calculate_analytics<T>(
     battle_id: i32,
-    model: &Model<T>,
+    model: &T,
     conn: &mut SqliteConnection,
 ) -> Result<BattleStatistics, Error>
 where
-    T: ModelOrUnrated,
-    <T::Model as mmr::Model>::Data: Clone,
+    T: RatingService,
 {
     #[derive(FromRow)]
-    struct ParticipantRow {
+    struct ParticipantRow<InnerT>
+    where
+        InnerT: RatingService,
+    {
         pub finish_time: Option<i32>,
         #[sqlx(flatten)]
-        pub rating: RatingRow,
+        pub rating: RatingEntity<<InnerT::Model as RatingModel>::Data>,
     }
 
-    let participants = sqlx::query_as::<_, ParticipantRow>(
+    let participants = sqlx::query_as::<_, ParticipantRow<T>>(
         r#"
         SELECT r1.*, p.finish_time
         FROM rating r1, rating r2, participant p, battle b
@@ -198,25 +199,21 @@ where
         .iter()
         .map(|p| &p.rating)
         .cloned()
-        .map(RatingRecord::<<T::Model as mmr::Model>::Data>::try_from)
-        .map(|r| r.map_err(Error::new))
+        .map(RatingEntity::<<T::Model as RatingModel>::Data>::try_from)
+        .map(|r| r.map(Rating::from).map_err(Error::new))
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let ordinal_sum: i32 = ratings
-        .iter()
-        .cloned()
-        .map(|r| Rating::from(r).ordinal() as i32)
-        .sum();
+    let ordinal_sum: i32 = ratings.iter().cloned().map(|r| r.ordinal() as i32).sum();
     let avg_mmr = if ratings.len() > 0 {
         Some(ordinal_sum / ratings.len() as i32)
     } else {
         None
     };
 
-    let quality = match model.model() {
-        Some(model) if ratings.len() > 0 => model.quality(&ratings).await.map(Some)?,
-        Some(_) => None,
-        None => None,
+    let quality = if ratings.len() > 0 {
+        model.quality_1v1(ratings.as_slice()).await?
+    } else {
+        None
     };
 
     let finish_time = participants.iter().filter_map(|s| s.finish_time).max();

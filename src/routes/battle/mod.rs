@@ -35,16 +35,14 @@ use uuid::Uuid;
 use std::{collections::HashSet, fmt::Debug};
 
 use crate::{
-    app::{AppState, Model, ModelOrUnrated},
+    app::AppState,
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
-    error::{Error, ErrorKind},
     entity::{
-        battle::{
-            BattleEntity, analytics::get_analytics, get_replay_url, update_participant_ratings,
-        },
-        user::{get_user_by_public_key, mmr},
+        battle::{BattleEntity, analytics::get_analytics, get_replay_url},
+        user::{get_user_by_public_key, mmr::RatingService},
     },
+    error::{Error, ErrorKind},
     validate::Valid,
 };
 
@@ -168,14 +166,12 @@ async fn upsert_skin(skin: &Skin, conn: &mut SqliteConnection) -> Result<(), Err
 #[instrument(skip(state, model))]
 pub async fn create<T>(
     server_auth: ServerAuthentication,
-    Extension(model): Extension<Model<T>>,
+    Extension(model): Extension<T>,
     State(state): State<AppState>,
     Payload(request): Payload<CreateBattleRequest>,
 ) -> Result<(StatusCode, Json<Battle>), Error>
 where
-    T: ModelOrUnrated + Clone + Send + Sync,
-    <T as ModelOrUnrated>::Model: mmr::Model + Debug,
-    <<T as ModelOrUnrated>::Model as mmr::Model>::Data: Debug + Clone,
+    T: RatingService + Clone + Send + Sync + 'static,
 {
     let now = Utc::now();
 
@@ -314,14 +310,12 @@ where
 pub async fn update<T>(
     _auth_guard: ServerAuthentication,
     Path((uuid,)): Path<(Uuid,)>,
-    Extension(model): Extension<Model<T>>,
+    Extension(model): Extension<T>,
     State(state): State<AppState>,
     Payload(request): Payload<UpdateBattleRequest>,
 ) -> Result<Json<Battle>, Error>
 where
-    T: ModelOrUnrated + Clone + Send + Sync,
-    <T as ModelOrUnrated>::Model: mmr::Model + Debug,
-    <<T as ModelOrUnrated>::Model as mmr::Model>::Data: Debug + Clone,
+    T: RatingService + Clone + Send + Sync + 'static,
 {
     let now = Utc::now();
 
@@ -405,12 +399,10 @@ where
     .execute(&mut *tx)
     .await?;
 
-    if let Some(model) = model.model() {
-        if request.status == Some(BattleStatus::Concluded)
-            || request.status == Some(BattleStatus::Cancelled)
-        {
-            update_participant_ratings(battle.id, model, &mut *tx).await?;
-        }
+    if request.status == Some(BattleStatus::Concluded)
+        || request.status == Some(BattleStatus::Cancelled)
+    {
+        model.update_ratings(battle.id, &mut *tx).await?;
     }
 
     // Create battle response
@@ -435,11 +427,9 @@ where
 }
 
 #[instrument(skip(model, db))]
-async fn flush_analytics<T>(battle_id: i32, model: &Model<T>, db: SqlitePool) -> Result<(), Error>
+async fn flush_analytics<T>(battle_id: i32, model: &T, db: SqlitePool) -> Result<(), Error>
 where
-    T: ModelOrUnrated,
-    <T as ModelOrUnrated>::Model: mmr::Model + Debug,
-    <<T as ModelOrUnrated>::Model as mmr::Model>::Data: Debug + Clone,
+    T: RatingService + Clone + Send + Sync,
 {
     tracing::debug!("flushing analytics");
     let mut conn = db.acquire().await?;

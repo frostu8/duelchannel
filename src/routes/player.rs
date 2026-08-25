@@ -14,11 +14,11 @@ use garde::Validate;
 use serde::Deserialize;
 
 use crate::{
-    app::{AppState, Model, ModelOrUnrated},
+    app::AppState,
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
+    entity::user::{UserBuilder, UserEntity, get_user_by_short_id, mmr::RatingService},
     error::{Error, ErrorKind},
-    entity::user::{UserBuilder, UserEntity, get_user_by_short_id, mmr::init_rating},
     session::SessionUser,
     validate::Valid,
 };
@@ -47,11 +47,11 @@ impl Default for ListUsersQuery {
 pub async fn create<T>(
     _auth_guard: ServerAuthentication,
     State(state): State<AppState>,
-    Extension(model): Extension<Model<T>>,
+    Extension(model): Extension<T>,
     Payload(request): Payload<CreateUser>,
 ) -> Result<Json<User>, Error>
 where
-    T: ModelOrUnrated,
+    T: RatingService,
 {
     let now = Utc::now();
 
@@ -93,13 +93,7 @@ where
     }
 
     // Initialize rating if it's enabled
-    let mmr = match model.model() {
-        Some(model) => {
-            let rating = init_rating(row.id, model, &mut *tx).await?;
-            Some(rating.ordinal() as i32)
-        }
-        None => None,
-    };
+    let mmr = model.create_rating(row.id, &mut *tx).await?;
 
     tx.commit().await?;
 

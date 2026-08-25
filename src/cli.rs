@@ -19,9 +19,8 @@ use sqlx::{FromRow, SqliteConnection, SqlitePool};
 use tokio::task::JoinSet;
 
 use crate::{
-    app::{Model, ModelOrUnrated},
     auth::api_key::{generate_api_key, hash_api_key},
-    entity::{battle::analytics::get_analytics, user::mmr},
+    entity::{battle::analytics::get_analytics, user::mmr::RatingService},
 };
 
 /// The command line arguments.
@@ -117,12 +116,11 @@ pub struct MmrReset;
 /// Recalculates battle analytics.
 pub async fn run_battle_analytics<T>(
     command: &Analytics,
-    model: &Model<T>,
+    model: &T,
     db: &SqlitePool,
 ) -> Result<(), Error>
 where
-    T: ModelOrUnrated + Clone + Send + Sync,
-    <T::Model as mmr::Model>::Data: Clone,
+    T: RatingService + Clone + Send + Sync + 'static,
 {
     #[derive(Clone, FromRow)]
     struct BattleRow {
@@ -160,7 +158,7 @@ where
             .collect::<Vec<_>>();
 
         let db_clone = db.clone();
-        let model_clone = Model::<T>::clone(model);
+        let model_clone = model.clone();
         let processed_count_clone = Arc::clone(&processed_count);
 
         tasks.spawn(async move {

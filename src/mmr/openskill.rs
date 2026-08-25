@@ -22,10 +22,9 @@ use tokio::{
 
 use crate::error::Error;
 
-use super::{Matchup, Model, ModelData, Rating, RatingRecord};
+use super::{Matchup, Rating, RatingModel, RatingModelData};
 
 pub type OpenSkillRating = Rating<OpenSkillData>;
-pub type OpenSkillRatingRecord = RatingRecord<OpenSkillData>;
 
 /// The openskill rating system.
 #[derive(Clone)]
@@ -73,7 +72,7 @@ impl OpenSkill {
     }
 }
 
-impl Model for OpenSkill {
+impl RatingModel for OpenSkill {
     type Data = OpenSkillData;
 
     async fn create_rating(&self, user_id: i32) -> Result<Rating<Self::Data>, Error> {
@@ -89,7 +88,7 @@ impl Model for OpenSkill {
 
     async fn rate(
         &self,
-        rating: &RatingRecord<Self::Data>,
+        rating: &Rating<Self::Data>,
         matchups: &[Matchup<Self::Data>],
         _period_elapsed: f32,
     ) -> Result<Rating<Self::Data>, Error> {
@@ -106,7 +105,7 @@ impl Model for OpenSkill {
         }
     }
 
-    async fn quality(&self, players: &[RatingRecord<Self::Data>]) -> Result<f32, Error> {
+    async fn quality(&self, players: &[Rating<Self::Data>]) -> Result<f32, Error> {
         let data = self
             .next_worker()
             .request(QualityRequest {
@@ -138,7 +137,7 @@ pub struct OpenSkillData {
     pub ordinal: f32,
 }
 
-impl ModelData for OpenSkillData {
+impl RatingModelData for OpenSkillData {
     fn ordinal(rating: &Rating<Self>) -> f32 {
         rating.extra.ordinal
     }
@@ -230,7 +229,7 @@ pub struct QualityResponse {
 /// A request to [`Model::rate`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RateRequest {
-    rating: OpenSkillRatingRecord,
+    rating: OpenSkillRating,
     matchups: Vec<Matchup<OpenSkillData>>,
 }
 
@@ -440,17 +439,14 @@ mod tests {
     use chrono::Utc;
     use duelchannel_model::battle::BattleStatus;
 
-    fn make_record(user_id: i32, rating: f32, deviation: f32) -> RatingRecord<OpenSkillData> {
-        RatingRecord {
+    fn make_record(user_id: i32, rating: f32, deviation: f32) -> OpenSkillRating {
+        OpenSkillRating {
             user_id,
-            period_id: 0,
             rating,
             deviation,
             extra: OpenSkillData {
                 ordinal: rating - 3.0 * deviation,
             },
-            inserted_at: Utc::now(),
-            updated_at: Utc::now(),
         }
     }
 

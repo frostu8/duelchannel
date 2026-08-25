@@ -21,14 +21,12 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    error::Error,
     entity::{
         MissingData,
-        user::{
-            UserEntity,
-            mmr::{Model, update_ratings},
-        },
+        user::{UserEntity, mmr::update_ratings},
     },
+    error::Error,
+    mmr::RatingModel,
 };
 
 /// A schema for battles stored in database.
@@ -99,8 +97,7 @@ pub async fn update_participant_ratings<T>(
     conn: &mut SqliteConnection,
 ) -> Result<(), Error>
 where
-    T: Model + Debug,
-    T::Data: Debug,
+    T: RatingModel,
 {
     #[derive(FromRow)]
     struct Query {

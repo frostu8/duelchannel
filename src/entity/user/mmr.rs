@@ -1,14 +1,11 @@
-//! Skill-based placements.
+//! Skill-based rating service.
 
-pub mod glicko2;
-pub mod openskill;
-
-use std::any::Any;
 use std::fmt::Debug;
+use std::{any::Any, future::ready};
 
 use derive_more::{Deref, DerefMut};
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Utc};
 
 use duelchannel_model::battle::BattleStatus;
 
@@ -17,80 +14,182 @@ use serde::{
     de::{DeserializeOwned, value::UnitDeserializer},
 };
 
-use sqlx::{FromRow, SqliteConnection};
+use sqlx::{FromRow, Row as _, SqliteConnection, sqlite::SqliteRow};
 
 use tracing::instrument;
 
-use crate::error::Error;
+use crate::{
+    entity::battle::update_participant_ratings,
+    error::Error,
+    mmr::{self, Rating, RatingModel},
+};
 
-/// A rating model.
-pub trait Model: Send + Sync {
-    /// The associated data type used to make the model function.
-    type Data: ModelData + Serialize + DeserializeOwned + 'static;
+/// A rating service.
+///
+/// Unlike [`RatingModel`], this can mean "one or zero models." Thus, the
+/// methods on this struct are specialized.
+///
+/// [`RatingModel`]: crate::mmr::RatingModel
+pub trait RatingService: Send + Sync {
+    /// The model included in the service.
+    ///
+    /// This may be the never type ([`!`]), in that case there is no
+    /// associated model, and code paths going there are unreachable.
+    type Model: RatingModel + Send + Sync + 'static;
 
-    /// Initializes a new rating.
+    /// Creates a user's rating.
+    ///
+    /// This returns the user's ordinal, or `None` if there is no model in-use.
     fn create_rating(
         &self,
-        player_id: i32,
-    ) -> impl Future<Output = Result<Rating<Self::Data>, Error>> + Send + Sync;
+        user_id: i32,
+        conn: &mut SqliteConnection,
+    ) -> impl Future<Output = Result<Option<i32>, Error>> + Send;
 
-    /// Rates a player's performance.
+    /// Updates the ratings of participants in a battle.
     ///
-    /// This also passes a `period_elapsed` delta.
-    fn rate(
+    /// If the participants are not already preloaded, this will preload them.
+    fn update_ratings(
         &self,
-        rating: &RatingRecord<Self::Data>,
-        matchups: &[Matchup<Self::Data>],
-        period_elapsed: f32,
-    ) -> impl Future<Output = Result<Rating<Self::Data>, Error>> + Send + Sync;
+        battle_id: i32,
+        conn: &mut SqliteConnection,
+    ) -> impl Future<Output = Result<(), Error>> + Send;
 
-    /// Gets the quality of a match, assuming each player is on their own team.
-    fn quality(
+    /// Fetches the quality of a match by its ratings.
+    fn quality_1v1(
         &self,
-        players: &[RatingRecord<Self::Data>],
-    ) -> impl Future<Output = Result<f32, Error>> + Send + Sync;
+        ratings: &[Rating<<Self::Model as RatingModel>::Data>],
+    ) -> impl Future<Output = Result<Option<f32>, Error>> + Send;
 
-    /// The time between rating periods.
-    fn period(&self) -> TimeDelta;
+    /// Resets all MMR of a list of players.
+    fn reset<I>(
+        &self,
+        players: I,
+        conn: &mut SqliteConnection,
+    ) -> impl Future<Output = Result<(), Error>> + Send
+    where
+        I: IntoIterator<Item = i32> + Send,
+        I::IntoIter: Send;
+
+    /// Dumps the MMR list to a writerr.
+    fn dump<W>(
+        &self,
+        writer: W,
+        conn: &mut SqliteConnection,
+    ) -> impl Future<Output = eyre::Result<()>> + Send
+    where
+        W: std::io::Write + Send;
 }
 
-impl Model for ! {
-    type Data = ();
+impl<T> RatingService for T
+where
+    T: RatingModel + Send + Sync + 'static,
+{
+    type Model = Self;
 
-    async fn create_rating(&self, _player_id: i32) -> Result<Rating<Self::Data>, Error> {
-        *self
-    }
-
-    async fn rate(
+    async fn create_rating(
         &self,
-        _rating: &RatingRecord<Self::Data>,
-        _matchups: &[Matchup<Self::Data>],
-        _period_elapsed: f32,
-    ) -> Result<Rating<Self::Data>, Error> {
-        *self
+        user_id: i32,
+        conn: &mut SqliteConnection,
+    ) -> Result<Option<i32>, Error> {
+        init_rating::<Self::Model>(user_id, self, conn)
+            .await
+            .map(|r| r.ordinal() as i32)
+            .map(Some)
     }
 
-    async fn quality(&self, _players: &[RatingRecord<Self::Data>]) -> Result<f32, Error> {
-        *self
+    async fn update_ratings(
+        &self,
+        battle_id: i32,
+        conn: &mut SqliteConnection,
+    ) -> Result<(), Error> {
+        update_participant_ratings(battle_id, self, conn).await
     }
 
-    fn period(&self) -> TimeDelta {
-        *self
+    async fn quality_1v1(
+        &self,
+        ratings: &[Rating<<Self::Model as RatingModel>::Data>],
+    ) -> Result<Option<f32>, Error> {
+        assert!(ratings.len() == 2);
+        self.quality(ratings).await.map(Some)
+    }
+
+    async fn reset<I>(&self, players: I, conn: &mut SqliteConnection) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = i32> + Send,
+        I::IntoIter: Send,
+    {
+        for id in players.into_iter() {
+            init_rating(id, self, conn).await?;
+        }
+        Ok(())
+    }
+
+    async fn dump<W>(&self, writer: W, conn: &mut SqliteConnection) -> eyre::Result<()>
+    where
+        W: std::io::Write + Send,
+    {
+        dump_rating(writer, self, conn).await
     }
 }
 
-pub trait ModelData: Send + Sync + Sized + 'static {
-    /// The ordinal of the rating.
-    fn ordinal(rating: &Rating<Self>) -> f32 {
-        rating.rating - rating.deviation * 2.0
+/// Indicates that there is no rating model being used.
+#[derive(Clone, Debug)]
+pub struct Unrated;
+
+impl RatingService for Unrated {
+    type Model = !;
+
+    fn create_rating(
+        &self,
+        _user_id: i32,
+        _conn: &mut SqliteConnection,
+    ) -> impl Future<Output = Result<Option<i32>, Error>> + Send {
+        ready(Ok(None))
+    }
+
+    fn update_ratings(
+        &self,
+        _battle_id: i32,
+        _conn: &mut SqliteConnection,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        ready(Ok(()))
+    }
+
+    fn quality_1v1(
+        &self,
+        _ratings: &[Rating<<Self::Model as RatingModel>::Data>],
+    ) -> impl Future<Output = Result<Option<f32>, Error>> + Send {
+        ready(Ok(None))
+    }
+
+    fn reset<I>(
+        &self,
+        _players: I,
+        _conn: &mut SqliteConnection,
+    ) -> impl Future<Output = Result<(), Error>> + Send
+    where
+        I: IntoIterator<Item = i32> + Send,
+        I::IntoIter: Send,
+    {
+        ready(Ok(()))
+    }
+
+    fn dump<W>(
+        &self,
+        _writer: W,
+        _conn: &mut SqliteConnection,
+    ) -> impl Future<Output = eyre::Result<()>> + Send
+    where
+        W: std::io::Write + Send,
+    {
+        ready(Ok(()))
     }
 }
 
-impl ModelData for () {}
-
-/// The rating period.
+/// A rating period.
 #[derive(Clone, Debug, FromRow)]
-pub struct RatingPeriod {
+pub struct RatingPeriodEntity {
     pub id: i32,
     #[sqlx(rename = "inserted_at")]
     pub started_at: DateTime<Utc>,
@@ -98,87 +197,12 @@ pub struct RatingPeriod {
     pub period_elapsed: f32,
 }
 
-/// A matchup between two players.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Matchup<T = ()> {
-    /// The opponent of the player.
-    pub opponent: RatingRecord<T>,
-    /// The status of the match that the player participated in.
-    pub status: BattleStatus,
-    /// The player's finish position.
-    pub position: i32,
-    /// The player's finish time.
-    pub finish_time: i32,
-    /// Whether the player NO CONTEST'd.
-    pub no_contest: bool,
-}
-
-#[derive(Debug, FromRow)]
-struct MatchupQuery {
-    #[sqlx(flatten)]
-    pub opponent: RatingRow,
-    #[sqlx(try_from = "u8")]
-    pub status: BattleStatus,
-    pub position: i32,
-    pub no_contest: bool,
-    pub finish_time: i32,
-}
-
-impl<T> TryFrom<MatchupQuery> for Matchup<T>
-where
-    T: DeserializeOwned + 'static,
-{
-    type Error = ron::Error;
-
-    fn try_from(value: MatchupQuery) -> Result<Self, Self::Error> {
-        value.opponent.try_into().map(|opponent| Matchup {
-            opponent,
-            status: value.status,
-            position: value.position,
-            finish_time: value.finish_time,
-            no_contest: value.no_contest,
-        })
-    }
-}
-
-/// A single player rating.
-///
-/// The rating may also contain arbitrary info `T` for the relevant MMR system
-/// to query.
-#[derive(Clone, Debug, Deref, DerefMut, Deserialize, Serialize)]
-pub struct Rating<T = ()> {
-    /// The id of the player this is for.
-    pub user_id: i32,
-    /// The player's actual rating.
-    pub rating: f32,
-    /// The rating deviation of the player.
-    pub deviation: f32,
-    /// Extra data for the rating system.
-    #[deref]
-    #[deref_mut]
-    #[serde(flatten)]
-    pub extra: T,
-}
-
-impl<T> Rating<T>
-where
-    T: ModelData,
-{
-    /// The player's ordinal.
-    ///
-    /// This is a number where the player's true skill rating is above with a
-    /// 95% chance.
-    pub fn ordinal(&self) -> f32 {
-        T::ordinal(self)
-    }
-}
-
 /// A historic player rating.
 ///
 /// These are fetched from the database and are associated with a rating
 /// period.
 #[derive(Clone, Debug, Deref, DerefMut, Deserialize, Serialize)]
-pub struct RatingRecord<T = ()> {
+pub struct RatingEntity<T = ()> {
     /// The id of the player this is for.
     pub user_id: i32,
     /// The period this rating belongs to.
@@ -198,8 +222,8 @@ pub struct RatingRecord<T = ()> {
     pub updated_at: DateTime<Utc>,
 }
 
-impl<T> From<RatingRecord<T>> for Rating<T> {
-    fn from(value: RatingRecord<T>) -> Self {
+impl<T> From<RatingEntity<T>> for Rating<T> {
+    fn from(value: RatingEntity<T>) -> Self {
         Rating {
             user_id: value.user_id,
             rating: value.rating,
@@ -209,44 +233,57 @@ impl<T> From<RatingRecord<T>> for Rating<T> {
     }
 }
 
-/// Inner struct for querying the database.
-#[derive(Clone, Debug, FromRow)]
-pub struct RatingRow {
-    /// The period this rating belongs to.
-    pub period_id: i32,
-    /// The id of the player this is for.
-    pub user_id: i32,
-    /// The player's actual rating.
-    pub rating: f32,
-    /// The rating deviation of the player.
-    pub deviation: f32,
-    /// Serialized extra data.
-    pub extra: Option<String>,
-    /// When the record was inserted.
-    pub inserted_at: DateTime<Utc>,
-    /// When the record was updated.
-    pub updated_at: DateTime<Utc>,
-}
-
-impl<T> TryFrom<RatingRow> for RatingRecord<T>
+impl<T> FromRow<'_, SqliteRow> for RatingEntity<T>
 where
     T: DeserializeOwned + 'static,
 {
-    type Error = ron::Error;
+    fn from_row(row: &SqliteRow) -> Result<Self, sqlx::Error> {
+        // Fetch extra data
+        let extra = match row.try_get::<Option<String>, _>("extra")? {
+            Some(ron_str) => ron::from_str(&ron_str).map_err(|error| sqlx::Error::ColumnDecode {
+                index: "extra".into(),
+                source: Box::new(error),
+            }),
+            None => T::deserialize(UnitDeserializer::<ron::Error>::new()).map_err(|error| {
+                sqlx::Error::ColumnDecode {
+                    index: "extra".into(),
+                    source: Box::new(error),
+                }
+            }),
+        };
 
-    fn try_from(value: RatingRow) -> Result<Self, Self::Error> {
-        // Deserialize extra
-        let extra = deserialize_extra(value.extra.as_deref())?;
-
-        Ok(RatingRecord {
-            user_id: value.user_id,
-            period_id: value.period_id,
-            rating: value.rating,
-            deviation: value.deviation,
-            extra,
-            inserted_at: value.inserted_at,
-            updated_at: value.updated_at,
+        Ok(RatingEntity {
+            user_id: row.try_get("user_id")?,
+            period_id: row.try_get("period_id")?,
+            rating: row.try_get("rating")?,
+            deviation: row.try_get("deviation")?,
+            inserted_at: row.try_get("inserted_at")?,
+            updated_at: row.try_get("updated_at")?,
+            extra: extra?,
         })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct Matchup<T> {
+    #[sqlx(flatten)]
+    pub opponent: RatingEntity<T>,
+    #[sqlx(try_from = "u8")]
+    pub status: BattleStatus,
+    pub position: i32,
+    pub no_contest: bool,
+    pub finish_time: i32,
+}
+
+impl<T> From<Matchup<T>> for mmr::Matchup<T> {
+    fn from(value: Matchup<T>) -> Self {
+        mmr::Matchup {
+            opponent: value.opponent.into(),
+            status: value.status,
+            position: value.position,
+            finish_time: value.finish_time,
+            no_contest: value.no_contest,
+        }
     }
 }
 
@@ -257,7 +294,7 @@ pub async fn init_rating<T>(
     conn: &mut SqliteConnection,
 ) -> Result<Rating<T::Data>, Error>
 where
-    T: Model,
+    T: RatingModel,
 {
     let now = Utc::now();
 
@@ -303,7 +340,7 @@ where
         Ok(rating)
     } else {
         // make a new rating period and use that id instead
-        let period = sqlx::query_as::<_, RatingPeriod>(
+        let period = sqlx::query_as::<_, RatingPeriodEntity>(
             r#"
             INSERT INTO rating_period (inserted_at)
             VALUES ($1)
@@ -339,7 +376,7 @@ where
 
 /// Catalogs a player rating.
 async fn catalog_rating<T>(
-    period: &RatingPeriod,
+    period: &RatingPeriodEntity,
     rating: &Rating<T>,
     conn: &mut SqliteConnection,
 ) -> Result<(), Error>
@@ -378,8 +415,7 @@ pub async fn update_ratings<T>(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<Rating<T::Data>>, Error>
 where
-    T: Model + Debug,
-    T::Data: Debug,
+    T: RatingModel,
 {
     let now = Utc::now();
     update_ratings_at(user_ids, model, now, conn).await
@@ -392,7 +428,7 @@ where
 ///
 /// Ensure both player's ratings exist (by calling [`get_rating`] for each of
 /// them) before calling this!
-#[instrument(skip(conn))]
+#[instrument(skip(conn, model))]
 pub async fn update_ratings_at<T>(
     user_ids: &[i32],
     model: &T,
@@ -400,11 +436,10 @@ pub async fn update_ratings_at<T>(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<Rating<T::Data>>, Error>
 where
-    T: Model + Debug,
-    T::Data: Debug,
+    T: RatingModel,
 {
     let mut ratings = Vec::with_capacity(user_ids.len());
-    let mut period: Option<RatingPeriod> = None;
+    let mut period: Option<RatingPeriodEntity> = None;
 
     for user_id in user_ids.iter().copied() {
         // Update players' rating
@@ -430,26 +465,31 @@ where
 }
 
 async fn update_one_rating<T>(
-    rating: &RatingRecord<T::Data>,
-    period: &RatingPeriod,
+    rating: &RatingEntity<T::Data>,
+    period: &RatingPeriodEntity,
     model: &T,
     conn: &mut SqliteConnection,
 ) -> Result<Rating<T::Data>, Error>
 where
-    T: Model + Debug,
-    T::Data: Debug,
+    T: RatingModel,
 {
     let ends_at = period.started_at + model.period();
 
-    let matchups = fetch_matchups(rating.user_id, period.started_at, ends_at, &mut *conn).await?;
+    let matchups = fetch_matchups(rating.user_id, period.started_at, ends_at, &mut *conn)
+        .await?
+        .into_iter()
+        .map(mmr::Matchup::<T::Data>::from)
+        .collect::<Vec<_>>();
 
     // Get the player's new rating
+    let rating = Rating::<T::Data>::from(rating.clone());
     let new_rating = model
-        .rate(&rating, &matchups, period.period_elapsed)
+        .rate(&rating, matchups.as_slice(), period.period_elapsed)
         .await?;
 
     // Cap deviation at certain value
-    // TODO: move this into the glicko2 mod
+    // TODO: move this into the glicko2 mod, as deviation capping is only a
+    // glicko2 thing; openskill doesn't need this
     //new_rating.deviation = f32::min(new_rating.deviation, config.defaults.deviation);
 
     tracing::debug!(?rating, ?new_rating, "updating rating for");
@@ -481,9 +521,9 @@ pub async fn next_rating_period<T>(
     user_id: i32,
     model: &T,
     conn: &mut SqliteConnection,
-) -> Result<RatingPeriod, Error>
+) -> Result<RatingPeriodEntity, Error>
 where
-    T: Model,
+    T: RatingModel,
 {
     let now = Utc::now();
     next_rating_period_at(user_id, model, now, conn).await
@@ -499,12 +539,12 @@ pub async fn next_rating_period_at<T>(
     model: &T,
     time: DateTime<Utc>,
     conn: &mut SqliteConnection,
-) -> Result<RatingPeriod, Error>
+) -> Result<RatingPeriodEntity, Error>
 where
-    T: Model,
+    T: RatingModel,
 {
     // Get last period the player participated in
-    let period = sqlx::query_as::<_, RatingPeriod>(
+    let period = sqlx::query_as::<_, RatingPeriodEntity>(
         r#"
         SELECT p.*
         FROM rating_period p, rating r
@@ -520,7 +560,7 @@ where
     .await?;
 
     let Some(mut period) = period else {
-        let period = sqlx::query_as::<_, RatingPeriod>(
+        let period = sqlx::query_as::<_, RatingPeriodEntity>(
             r#"
             INSERT INTO rating_period (inserted_at)
             VALUES ($1)
@@ -537,7 +577,7 @@ where
     };
 
     // Fast-forward logged periods
-    let ff = sqlx::query_as::<_, RatingPeriod>(
+    let ff = sqlx::query_as::<_, RatingPeriodEntity>(
         r#"
         SELECT *
         FROM rating_period
@@ -555,14 +595,19 @@ where
 
         // Get player rating
         let player = get_rating::<T>(user_id, &mut *conn).await?;
+        let player = Rating::from(player);
 
         // All players get their rating rolled over if they had one.
         // Fetch the player's matchups
-        let matchups = fetch_matchups(player.user_id, started_at, ended_at, &mut *conn).await?;
+        let matchups = fetch_matchups(player.user_id, started_at, ended_at, &mut *conn)
+            .await?
+            .into_iter()
+            .map(mmr::Matchup::from)
+            .collect::<Vec<_>>();
 
         // Get the player's new rating
         // Since this period is completed, the period elapsed is always 1.0
-        let new_rating = model.rate(&player, &matchups, 1.0).await?;
+        let new_rating = model.rate(&player, matchups.as_slice(), 1.0).await?;
 
         let now = Utc::now();
 
@@ -607,7 +652,7 @@ where
         );
 
         // Insert a new period into the database
-        let mut new_period = sqlx::query_as::<_, RatingPeriod>(
+        let mut new_period = sqlx::query_as::<_, RatingPeriodEntity>(
             r#"
             INSERT INTO rating_period (inserted_at)
             VALUES ($1)
@@ -621,11 +666,15 @@ where
 
         // Get player rating
         let player = get_rating::<T>(user_id, &mut *conn).await?;
+        let player = Rating::from(player);
 
         // All players get their rating rolled over if they had one.
         // Fetch the player's matchups
-        let matchups =
-            fetch_matchups(player.user_id, period.started_at, ended_at, &mut *conn).await?;
+        let matchups = fetch_matchups(player.user_id, period.started_at, ended_at, &mut *conn)
+            .await?
+            .into_iter()
+            .map(mmr::Matchup::from)
+            .collect::<Vec<_>>();
 
         // Get the player's new rating
         let new_rating = model
@@ -663,15 +712,15 @@ where
 pub async fn get_rating<T>(
     user_id: i32,
     conn: &mut SqliteConnection,
-) -> Result<RatingRecord<T::Data>, Error>
+) -> Result<RatingEntity<T::Data>, Error>
 where
-    T: Model,
+    T: RatingModel,
 {
-    let rating = sqlx::query_as::<_, RatingRow>(
+    let rating = sqlx::query_as::<_, RatingEntity<T::Data>>(
         r#"
-        SELECT r.*
-        FROM rating r
-        WHERE r.user_id = $1
+        SELECT *
+        FROM rating
+        WHERE user_id = $1
         ORDER BY inserted_at DESC
         LIMIT 1
         "#,
@@ -679,7 +728,7 @@ where
     .bind(user_id)
     .fetch_one(&mut *conn)
     .await?;
-    RatingRecord::<T::Data>::try_from(rating).map_err(Error::new)
+    RatingEntity::<T::Data>::try_from(rating).map_err(Error::new)
 }
 
 #[instrument(skip(conn))]
@@ -690,9 +739,9 @@ async fn fetch_matchups<T>(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<Matchup<T>>, Error>
 where
-    T: DeserializeOwned + 'static,
+    T: DeserializeOwned + Send + Unpin + 'static,
 {
-    sqlx::query_as::<_, MatchupQuery>(include_str!("find_matchups.sql"))
+    sqlx::query_as::<_, Matchup<T>>(include_str!("find_matchups.sql"))
         .bind(user_id)
         .bind(from)
         .bind(to)
@@ -717,7 +766,7 @@ pub async fn dump_rating<T, W: std::io::Write>(
     conn: &mut SqliteConnection,
 ) -> eyre::Result<()>
 where
-    T: Model,
+    T: RatingModel,
 {
     let now = Utc::now();
     let from = now - model.period();
@@ -735,7 +784,7 @@ where
 
     for (user_id, short_id, display_name) in users {
         // Get the player's record, or insert it if it doesn't exist.
-        let rating = sqlx::query_as::<_, RatingRow>(
+        let rating = sqlx::query_as::<_, RatingEntity<T::Data>>(
             r#"
             SELECT r.*
             FROM user u, rating r
@@ -754,9 +803,14 @@ where
         .fetch_one(&mut *conn)
         .await?;
 
-        let rating = RatingRecord::<T::Data>::try_from(rating)?;
+        let rating = RatingEntity::<T::Data>::try_from(rating)?;
+        let rating = Rating::from(rating);
 
-        let matchups = fetch_matchups::<T::Data>(user_id, from, now, &mut *conn).await?;
+        let matchups = fetch_matchups::<T::Data>(user_id, from, now, &mut *conn)
+            .await?
+            .into_iter()
+            .map(mmr::Matchup::from)
+            .collect::<Vec<_>>();
 
         if matchups.len() > 0 {
             // Get the player's new rating

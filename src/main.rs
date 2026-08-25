@@ -20,13 +20,14 @@ use axum::{
 use axum_server::Handle;
 
 use duelchannel::{
-    app::{AppState, Model, ModelOrUnrated, Unrated},
+    app::AppState,
     auth::oauth2::OauthState,
     cli::{self, AnalyticsCommand, Args, Command, MmrCommand, MmrDump},
     config::{Config, RatingModelConfig, StorageService, read_config},
+    entity::user::mmr::{RatingService, Unrated},
     error::Error,
+    mmr::{glicko2::Glicko2, openskill::OpenSkill},
     routes,
-    entity::user::mmr::{self, dump_rating, glicko2::Glicko2, init_rating, openskill::OpenSkill},
 };
 
 use sqlx::{Sqlite, pool::PoolOptions};
@@ -100,6 +101,7 @@ async fn main() -> eyre::Result<()> {
         RatingModelConfig::Unrated => with_rating_model(cli, config, Unrated).await,
         RatingModelConfig::Glicko2(mmr_config) => {
             let model = Glicko2::new(mmr_config.clone());
+            tracing::info!("using glicko2 model");
             with_rating_model(cli, config, model).await
         }
         RatingModelConfig::OpenSkill(mmr_config) => {
@@ -112,9 +114,8 @@ async fn main() -> eyre::Result<()> {
 
 async fn with_rating_model<T>(cli: Args, mut config: Config, model: T) -> eyre::Result<()>
 where
-    T: Debug + Clone + Send + Sync + ModelOrUnrated + 'static,
-    <T as ModelOrUnrated>::Model: Debug,
-    <T::Model as mmr::Model>::Data: Debug + Clone,
+    T: Debug + Clone + Send + Sync + RatingService + 'static,
+    <T as RatingService>::Model: Debug,
 {
     let database_url = config
         .server
@@ -152,8 +153,6 @@ where
         }
     };
 
-    let app_model = Model::new(model.clone());
-
     // Run any pending commands
     if let Some(command) = cli.command.as_ref() {
         match command {
@@ -173,7 +172,7 @@ where
                     ..
                 },
             ) => {
-                cli::run_battle_analytics(&analytics, &app_model, &db).await?;
+                cli::run_battle_analytics(&analytics, &model, &db).await?;
             }
             Command::Analytics(cli::Analytics { command: None, .. }) => {
                 Args::command().print_help().unwrap();
@@ -202,15 +201,11 @@ where
                 // update all players ratings
                 let player_ids = sqlx::query_as::<_, (i32,)>("SELECT id FROM user")
                     .fetch_all(&mut *tx)
-                    .await?;
+                    .await?
+                    .into_iter()
+                    .map(|(id,)| id);
 
-                if let Some(model) = model.model() {
-                    for (id,) in player_ids {
-                        // init player rating
-                        init_rating(id, model, &mut *tx).await?;
-                    }
-                }
-
+                model.reset(player_ids, &mut *tx).await?;
                 tx.commit().await?;
             }
             Command::Mmr(cli::Mmr {
@@ -236,12 +231,8 @@ where
                     .await?;
                 }
 
-                if let Some(model) = model.model() {
-                    dump_rating(std::io::stdout(), model, &mut *tx).await?;
-                }
-
-                // rollback transaction
-                tx.rollback().await?;
+                model.dump(std::io::stdout(), &mut *tx).await?;
+                tx.rollback().await?; // rollback participants deletion
             }
             Command::Mmr(cli::Mmr { command: None }) => {
                 Args::command().print_help().unwrap();
@@ -375,7 +366,7 @@ where
                         .allow_origin(Any),
                 ),
         )
-        .layer(Extension(app_model))
+        .layer(Extension(model))
         .layer(session_layer)
         .layer(
             TraceLayer::new_for_http()

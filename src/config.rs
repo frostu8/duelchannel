@@ -16,7 +16,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 use eyre::Error;
 
-use crate::entity::user::mmr::{glicko2::Glicko2Config, openskill::OpenSkillConfig};
+use crate::mmr::{glicko2::Glicko2Config, openskill::OpenSkillConfig};
 
 /// Full application configuration.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

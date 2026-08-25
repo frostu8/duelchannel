@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 
-use super::{Model, ModelData, Rating, RatingRecord};
+use super::{Rating, RatingModel, RatingModelData};
 
 pub const CONVERGENCE_TOLERANCE: f32 = 0.000_001;
 
@@ -33,7 +33,7 @@ impl From<Glicko2Config> for Glicko2 {
     }
 }
 
-impl Model for Glicko2 {
+impl RatingModel for Glicko2 {
     type Data = Glicko2Data;
 
     async fn create_rating(&self, player_id: i32) -> Result<Rating<Self::Data>, Error> {
@@ -49,7 +49,7 @@ impl Model for Glicko2 {
 
     async fn rate(
         &self,
-        rating: &RatingRecord<Self::Data>,
+        rating: &Rating<Self::Data>,
         matchups: &[super::Matchup<Self::Data>],
         period_elapsed: f32,
     ) -> Result<Rating<Self::Data>, Error> {
@@ -68,7 +68,7 @@ impl Model for Glicko2 {
         Ok(rate(&self.config, rating, &matchups, period_elapsed))
     }
 
-    async fn quality(&self, _players: &[RatingRecord<Self::Data>]) -> Result<f32, Error> {
+    async fn quality(&self, _players: &[Rating<Self::Data>]) -> Result<f32, Error> {
         todo!()
     }
 
@@ -83,9 +83,9 @@ pub struct Glicko2Data {
     pub volatility: f32,
 }
 
-impl ModelData for Glicko2Data {}
+impl RatingModelData for Glicko2Data {}
 
-pub type Glicko2RatingRecord = RatingRecord<Glicko2Data>;
+pub type Glicko2Rating = Rating<Glicko2Data>;
 
 /// Configuration for MMR.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -145,7 +145,7 @@ impl Default for InitialRating {
 #[derive(Clone, Debug)]
 struct Matchup {
     /// The opponent player's rating at the start of the period
-    pub opponent: Glicko2RatingRecord,
+    pub opponent: Glicko2Rating,
     /// The outcome of the match, in the perspective of the player, *not* the
     /// opponent.
     pub outcome: Outcome,
@@ -162,7 +162,7 @@ enum Outcome {
 /// Returns a new player rating.
 fn rate(
     config: &Glicko2Config,
-    player: &RatingRecord<Glicko2Data>,
+    player: &Glicko2Rating,
     matches: &[Matchup],
     fractional_period: f32,
 ) -> Rating<Glicko2Data> {
@@ -301,7 +301,7 @@ fn calculate_pre_rating_period_value(new_volatility: f32, phi: f32, fractional_p
 //
 //                         HORRIFYING!
 //
-fn iterate_new_volatility(v: f32, delta: f32, player: &Glicko2RatingRecord, tau: f32) -> f32 {
+fn iterate_new_volatility(v: f32, delta: f32, player: &Glicko2Rating, tau: f32) -> f32 {
     let (_, phi) = to_glicko2(player);
     let phi_squared = phi.powi(2);
 
@@ -366,7 +366,7 @@ fn g_func(phi: f32) -> f32 {
     (1.0 + 3.0 * phi.powi(2) / PI.powi(2)).sqrt().recip()
 }
 
-fn to_glicko2<T>(player: &RatingRecord<T>) -> (f32, f32) {
+fn to_glicko2<T>(player: &Rating<T>) -> (f32, f32) {
     let mu = (player.rating - 1500.0) / 173.7178; // Glicko-2 rating
     let phi = player.deviation / 173.7178; // Glicko-2 deviation
 
@@ -378,14 +378,11 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    fn new_player_rating() -> Glicko2RatingRecord {
-        RatingRecord {
+    fn new_player_rating() -> Glicko2Rating {
+        Glicko2Rating {
             user_id: 1,
-            period_id: 1,
             rating: 1500.0,
             deviation: 350.0,
-            inserted_at: Utc::now(),
-            updated_at: Utc::now(),
             extra: Glicko2Data { volatility: 0.06 },
         }
     }
@@ -396,7 +393,7 @@ mod tests {
     fn test_glicko2() {
         let config = Glicko2Config::default();
 
-        let player = RatingRecord {
+        let player = Glicko2Rating {
             rating: 1500.0,
             deviation: 200.0,
             extra: Glicko2Data { volatility: 0.06 },
@@ -405,7 +402,7 @@ mod tests {
 
         let matchups = vec![
             Matchup {
-                opponent: RatingRecord {
+                opponent: Glicko2Rating {
                     rating: 1400.0,
                     deviation: 30.0,
                     extra: Glicko2Data { volatility: 0.06 },
@@ -414,7 +411,7 @@ mod tests {
                 outcome: Outcome::Win,
             },
             Matchup {
-                opponent: RatingRecord {
+                opponent: Glicko2Rating {
                     rating: 1550.0,
                     deviation: 100.0,
                     extra: Glicko2Data { volatility: 0.06 },
@@ -423,7 +420,7 @@ mod tests {
                 outcome: Outcome::Lose,
             },
             Matchup {
-                opponent: RatingRecord {
+                opponent: Glicko2Rating {
                     rating: 1700.0,
                     deviation: 300.0,
                     extra: Glicko2Data { volatility: 0.06 },
