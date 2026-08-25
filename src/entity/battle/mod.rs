@@ -22,7 +22,7 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     error::Error,
-    schema::{
+    entity::{
         MissingData,
         user::{
             UserEntity,

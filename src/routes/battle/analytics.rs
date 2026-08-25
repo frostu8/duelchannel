@@ -5,7 +5,7 @@ use axum_streams::StreamBodyAs;
 use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc::unbounded_channel;
 
-use crate::{app::AppState, error::Error, schema::battle::analytics::stream_analytics};
+use crate::{app::AppState, error::Error, entity::battle::analytics::stream_analytics};
 
 /// Fetches analytics about battles.
 pub async fn show(State(state): State<AppState>) -> Result<impl IntoResponse, Error> {

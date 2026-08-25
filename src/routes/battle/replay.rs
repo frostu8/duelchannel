@@ -19,7 +19,7 @@ use crate::{
     body::Json,
     error::{Error, ErrorKind},
     multipart::Multipart,
-    schema::battle::{BattleEntity, get_replay_url},
+    entity::battle::{BattleEntity, get_replay_url},
 };
 
 const MAX_REPLAY_SIZE: usize = 1024 * 1024 * 4;

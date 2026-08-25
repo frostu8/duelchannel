@@ -39,7 +39,7 @@ use crate::{
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
     error::{Error, ErrorKind},
-    schema::{
+    entity::{
         battle::{
             BattleEntity, analytics::get_analytics, get_replay_url, update_participant_ratings,
         },

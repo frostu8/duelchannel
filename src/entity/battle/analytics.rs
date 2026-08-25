@@ -9,7 +9,7 @@ use sqlx::{FromRow, SqliteConnection};
 use crate::{
     app::{Model, ModelOrUnrated},
     error::Error,
-    schema::user::mmr::{self, Model as _, Rating, RatingRecord, RatingRow},
+    entity::user::mmr::{self, Model as _, Rating, RatingRecord, RatingRow},
 };
 
 /// A set of analytics for a battle.

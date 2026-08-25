@@ -18,7 +18,7 @@ use crate::{
     auth::api_key::ServerAuthentication,
     body::{Json, Payload},
     error::{Error, ErrorKind},
-    schema::battle::get_participant_by_short_id,
+    entity::battle::get_participant_by_short_id,
 };
 
 /// Updates the placement of a player for a given match.

@@ -12,7 +12,7 @@ pub mod config;
 pub mod error;
 pub mod multipart;
 pub mod routes;
-pub mod schema;
+pub mod entity;
 pub mod session;
 pub mod short_id;
 pub mod validate;

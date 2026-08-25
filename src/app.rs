@@ -8,7 +8,7 @@ use opendal::Operator;
 
 use sqlx::SqlitePool;
 
-use crate::{config::Config, schema::user::mmr};
+use crate::{config::Config, entity::user::mmr};
 
 /// Shared app state.
 ///

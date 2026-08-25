@@ -26,7 +26,7 @@ use duelchannel::{
     config::{Config, RatingModelConfig, StorageService, read_config},
     error::Error,
     routes,
-    schema::user::mmr::{self, dump_rating, glicko2::Glicko2, init_rating, openskill::OpenSkill},
+    entity::user::mmr::{self, dump_rating, glicko2::Glicko2, init_rating, openskill::OpenSkill},
 };
 
 use sqlx::{Sqlite, pool::PoolOptions};

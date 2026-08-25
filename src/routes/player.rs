@@ -18,7 +18,7 @@ use crate::{
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
     error::{Error, ErrorKind},
-    schema::user::{UserBuilder, UserEntity, get_user_by_short_id, mmr::init_rating},
+    entity::user::{UserBuilder, UserEntity, get_user_by_short_id, mmr::init_rating},
     session::SessionUser,
     validate::Valid,
 };

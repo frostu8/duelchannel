@@ -21,7 +21,7 @@ use tokio::task::JoinSet;
 use crate::{
     app::{Model, ModelOrUnrated},
     auth::api_key::{generate_api_key, hash_api_key},
-    schema::{battle::analytics::get_analytics, user::mmr},
+    entity::{battle::analytics::get_analytics, user::mmr},
 };
 
 /// The command line arguments.

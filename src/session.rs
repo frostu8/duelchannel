@@ -29,7 +29,7 @@ use tower_sessions::Session as TowerSession;
 use crate::{
     app::AppState,
     error::{Error, ErrorKind},
-    schema::user::{UserEntity, get_user},
+    entity::user::{UserEntity, get_user},
 };
 
 pub type SessionError = tower_sessions::session::Error;

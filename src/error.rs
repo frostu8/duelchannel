@@ -23,7 +23,7 @@ use duelchannel_model::{ApiError, rrid::Rrid};
 
 use uuid::Uuid;
 
-use crate::{body::Json, schema::MissingData, short_id::IdsExhausted};
+use crate::{body::Json, entity::MissingData, short_id::IdsExhausted};
 
 /// Application error that may occur during the processing of a request.
 ///
