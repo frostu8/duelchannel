@@ -19,7 +19,7 @@ use crate::{
     body::Json,
     error::{Error, ErrorKind},
     multipart::Multipart,
-    schema::battle::{BattleRow, get_replay_url, preload_participants},
+    schema::battle::{BattleEntity, get_replay_url},
 };
 
 const MAX_REPLAY_SIZE: usize = 1024 * 1024 * 4;
@@ -34,7 +34,7 @@ pub async fn upload(
     let mut tx = state.db.begin().await.map_err(Error::new)?;
 
     // Get associated battle
-    let battle = sqlx::query_as::<_, BattleRow>(
+    let battle = sqlx::query_as::<_, BattleEntity>(
         r#"
         SELECT *
         FROM battle b
@@ -44,7 +44,7 @@ pub async fn upload(
     .bind(match_id.hyphenated().to_string())
     .fetch_optional(&mut *tx)
     .await?;
-    let Some(mut row) = battle else {
+    let Some(mut battle) = battle else {
         return Err(Error::not_found(format!("Match {} not found", match_id)));
     };
 
@@ -82,7 +82,7 @@ pub async fn upload(
 
     // If the battle already had a replay, delete the old replay
     if let Some((replay_hash, replay_filename)) =
-        row.replay_hash.take().zip(row.replay_filename.take())
+        battle.replay_hash.take().zip(battle.replay_filename.take())
     {
         let s3_path = format!("{}/{}", replay_hash, replay_filename);
         state
@@ -108,20 +108,22 @@ pub async fn upload(
         WHERE id = $1
         "#,
     )
-    .bind(row.id)
+    .bind(battle.id)
     .bind(&hash)
     .bind(&filename)
     .execute(&mut *tx)
     .await?;
 
-    // Replace old data
-    row.replay_hash = Some(hash);
-    row.replay_filename = Some(filename);
+    // Replace old data in cached result
+    battle.replay_hash = Some(hash);
+    battle.replay_filename = Some(filename);
 
-    let mut battle = Battle::from(&row);
+    // Preload stuff and normalize
+    battle.preload_participants(&mut *tx).await?;
+    let replay_url = get_replay_url(&battle, &state.config);
 
-    battle.replay_url = get_replay_url(&row, &state.config);
-    preload_participants(&mut battle, &mut *tx).await?;
+    let mut battle = Battle::try_from(battle)?;
+    battle.replay_url = replay_url;
 
     tx.commit().await.map_err(Error::new)?;
 

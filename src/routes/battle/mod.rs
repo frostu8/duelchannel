@@ -41,8 +41,7 @@ use crate::{
     error::{Error, ErrorKind},
     schema::{
         battle::{
-            BattleRow, analytics::get_analytics, get_replay_url, preload_participants,
-            update_participant_ratings,
+            BattleEntity, analytics::get_analytics, get_replay_url, update_participant_ratings,
         },
         user::{get_user_by_public_key, mmr},
     },
@@ -74,7 +73,7 @@ pub async fn list(
 ) -> Result<Json<Vec<Battle>>, Error> {
     let mut conn = state.db.acquire().await?;
 
-    let rows = sqlx::query_as::<_, BattleRow>(
+    let rows = sqlx::query_as::<_, BattleEntity>(
         r#"
         SELECT b.*
         FROM battle b
@@ -96,10 +95,14 @@ pub async fn list(
 
     // Preload all battles
     let mut battles = Vec::with_capacity(rows.len());
-    for row in rows {
-        let mut battle = Battle::from(&row);
-        battle.replay_url = get_replay_url(&row, &state.config);
-        preload_participants(&mut battle, &mut *conn).await?;
+    for mut battle in rows {
+        // Create battle response
+        battle.preload_participants(&mut conn).await?;
+        let replay_url = get_replay_url(&battle, &state.config);
+
+        let mut battle = Battle::try_from(battle)?;
+        battle.replay_url = replay_url;
+
         battles.push(battle);
     }
 
@@ -114,7 +117,7 @@ pub async fn show(
 ) -> Result<Json<Battle>, Error> {
     let mut conn = state.db.acquire().await?;
 
-    let row = sqlx::query_as::<_, BattleRow>(
+    let battle = sqlx::query_as::<_, BattleEntity>(
         r#"
         SELECT b.*
         FROM battle b
@@ -125,15 +128,16 @@ pub async fn show(
     .fetch_optional(&mut *conn)
     .await?;
 
-    let Some(row) = row else {
+    let Some(mut battle) = battle else {
         return Err(Error::not_found(format!("Match {} not found", uuid)));
     };
 
-    // Create battle struct
-    let mut battle = Battle::from(&row);
+    // Create battle response
+    battle.preload_participants(&mut conn).await?;
+    let replay_url = get_replay_url(&battle, &state.config);
 
-    battle.replay_url = get_replay_url(&row, &state.config);
-    preload_participants(&mut battle, &mut *conn).await?;
+    let mut battle = Battle::try_from(battle)?;
+    battle.replay_url = replay_url;
 
     Ok(Json(battle))
 }
@@ -275,10 +279,10 @@ where
     tx.commit().await?;
 
     // Create battle model
-    let schema = BattleRow {
+    let schema = BattleEntity {
         id: match_id,
         server_id: server_auth.id,
-        uuid: uuid.hyphenated().to_string(),
+        uuid,
         level_name: request.level_name,
         status: BattleStatus::Ongoing,
         replay_hash: None,
@@ -287,8 +291,10 @@ where
         concluded_at: None,
         inserted_at: now,
         updated_at: now,
+        participants: Some(Vec::new()),
     };
-    let mut battle = Battle::from(schema);
+
+    let mut battle = Battle::try_from(schema)?;
     battle.participants = participants;
 
     // Commit analytics
@@ -321,7 +327,7 @@ where
 
     let mut tx = state.db.begin().await?;
 
-    let battle_query = sqlx::query_as::<_, BattleRow>(
+    let battle = sqlx::query_as::<_, BattleEntity>(
         r#"
         SELECT b.*
         FROM battle b
@@ -332,17 +338,14 @@ where
     .fetch_optional(&mut *tx)
     .await?;
 
-    let Some(mut battle_query) = battle_query else {
+    let Some(mut battle) = battle else {
         return Err(Error::not_found(format!("Match {} not found", uuid)));
     };
-    let battle_id = battle_query.id;
+    let battle_id = battle.id;
 
     // Verify changes
-    let is_status_changed = request
-        .status
-        .map(|s| s != battle_query.status)
-        .unwrap_or(false);
-    if battle_query.status != BattleStatus::Ongoing {
+    let is_status_changed = request.status.map(|s| s != battle.status).unwrap_or(false);
+    if battle.status != BattleStatus::Ongoing {
         return Err(ErrorKind::AlreadyConcluded(uuid).into());
     }
 
@@ -365,19 +368,19 @@ where
                 AND match_id = $1
             "#,
         )
-        .bind(battle_query.id)
+        .bind(battle.id)
         .execute(&mut *tx)
         .await?;
 
         set_concluded = Some(now);
 
         // Update base schema value
-        battle_query.status = new_status;
+        battle.status = new_status;
     }
 
     // Update margin score if it is changed
     if let Some(margin_score) = request.margin_score {
-        battle_query.margin_score = margin_score;
+        battle.margin_score = margin_score;
     }
 
     // Update match details
@@ -394,7 +397,7 @@ where
             id = $1
         "#,
     )
-    .bind(battle_query.id)
+    .bind(battle.id)
     .bind(now)
     .bind(request.status.map(|s| u8::from(s)))
     .bind(set_concluded)
@@ -406,15 +409,16 @@ where
         if request.status == Some(BattleStatus::Concluded)
             || request.status == Some(BattleStatus::Cancelled)
         {
-            update_participant_ratings(battle_query.id, model, &mut *tx).await?;
+            update_participant_ratings(battle.id, model, &mut *tx).await?;
         }
     }
 
-    // Create battle struct
-    let mut battle = Battle::from(&battle_query);
+    // Create battle response
+    battle.preload_participants(&mut *tx).await?;
+    let replay_url = get_replay_url(&battle, &state.config);
 
-    battle.replay_url = get_replay_url(&battle_query, &state.config);
-    preload_participants(&mut battle, &mut *tx).await?;
+    let mut battle = Battle::try_from(battle)?;
+    battle.replay_url = replay_url;
 
     tx.commit().await?;
 

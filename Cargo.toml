@@ -20,7 +20,7 @@ figment = { version = "0.10", features = ["env", "toml"] }
 futures-util = "0.3"
 http = "1"
 serde = { workspace = true }
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "chrono"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time", "process"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "compression-deflate", "cors"] }
@@ -30,15 +30,16 @@ serde_repr = { workspace = true }
 uuid = { version = "1", features = ["serde", "v4"] }
 serde_json = "1"
 tower-cookies = { version = "0.11", features = ["private"] }
-tower-sessions = { version = "0.14", default-features = false, features = ["axum-core", "private"] }
-tower-sessions-moka-store = "0.15"
-tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"] }
+tower-sessions = { version = "0.15", default-features = false, features = ["axum-core", "private"] }
+tower-sessions-moka-store = { git = "https://github.com/maxcountryman/tower-sessions-stores.git" }
+# lmao
+tower-sessions-sqlx-store = { git = "https://github.com/maxcountryman/tower-sessions-stores.git", features = ["sqlite"] }
 time = "0.3"
-rand = "0.9"
+rand = "0.10"
 oauth2 = "5"
 reqwest = "0.12"
-twilight-model = { git = "https://github.com/twilight-rs/twilight.git" }
-twilight-http = { git = "https://github.com/twilight-rs/twilight.git" }
+twilight-model = "0.17"
+twilight-http = "0.17"
 clap = { version = "4", features = ["derive"] }
 sha2 = "0.10"
 base16 = { workspace = true }
@@ -56,6 +57,12 @@ bytes = "1.11.1"
 rustls = "0.23.40"
 axum-streams = { version = "0.25.0", features = ["json"] }
 num_cpus = "1.17.0"
+sea-query = { version = "1", features = ["sqlx-utils"] }
+sea-query-sqlx = { version = "0.9", features = [
+  "sqlx-sqlite",
+  "with-chrono",
+  "runtime-tokio",
+] }
 
 [workspace]
 resolver = "3"

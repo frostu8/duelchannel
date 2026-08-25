@@ -12,22 +12,32 @@ use duelchannel_model::{
     user::{User, UserFlags},
 };
 
-use sqlx::{FromRow, SqliteConnection};
+use sea_query::{
+    Asterisk, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SqliteQueryBuilder,
+};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{FromRow, Row as _, SqliteConnection, sqlite::SqliteRow};
+use uuid::Uuid;
 
 use crate::{
     config::Config,
     error::Error,
-    schema::user::mmr::{Model, update_ratings},
+    schema::{
+        MissingData,
+        user::{
+            UserEntity,
+            mmr::{Model, update_ratings},
+        },
+    },
 };
 
 /// A schema for battles stored in database.
-///
-/// Used primarily to construct [`Battle`]s.
 #[derive(Clone, Debug, FromRow)]
-pub struct BattleRow {
+pub struct BattleEntity {
     pub id: i32,
     pub server_id: i32,
-    pub uuid: String,
+    #[sqlx(try_from = "String")]
+    pub uuid: Uuid,
     pub level_name: String,
     #[sqlx(try_from = "u8")]
     pub status: BattleStatus,
@@ -37,25 +47,48 @@ pub struct BattleRow {
     pub concluded_at: Option<DateTime<Utc>>,
     pub inserted_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+
+    #[sqlx(skip)]
+    pub participants: Option<Vec<ParticipantEntity>>,
 }
 
-impl From<BattleRow> for Battle {
-    fn from(value: BattleRow) -> Self {
-        (&value).into()
+impl BattleEntity {
+    /// Preloads the `participants` field of a [`Battle`].
+    pub async fn preload_participants(
+        &mut self,
+        conn: &mut SqliteConnection,
+    ) -> Result<&[ParticipantEntity], Error> {
+        let (query, values) = select_participants()
+            .and_where(Expr::col((Table::Participant, "match_id")).eq(self.id))
+            .build_sqlx(SqliteQueryBuilder);
+        let participants = sqlx::query_with(sqlx::AssertSqlSafe(query), values)
+            .try_map(unpack_participant)
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(Error::from)?;
+        self.participants = Some(participants);
+        Ok(self.participants.as_ref().unwrap())
     }
 }
 
-impl From<&BattleRow> for Battle {
-    fn from(value: &BattleRow) -> Self {
-        Battle {
-            id: value.uuid.clone(),
-            level_name: value.level_name.clone(),
-            participants: vec![],
+impl TryFrom<BattleEntity> for Battle {
+    type Error = MissingData;
+
+    fn try_from(value: BattleEntity) -> Result<Self, Self::Error> {
+        Ok(Battle {
+            id: value.uuid.hyphenated().to_string(),
+            level_name: value.level_name,
+            participants: value
+                .participants
+                .ok_or_else(|| MissingData::new("participants"))?
+                .into_iter()
+                .map(Participant::try_from)
+                .collect::<Result<Vec<_>, MissingData>>()?,
             status: value.status,
             margin_score: value.margin_score,
             replay_url: None,
             started_at: value.inserted_at,
-        }
+        })
     }
 }
 
@@ -123,7 +156,7 @@ where
 }
 
 /// Gets the replay url of a battle.
-pub fn get_replay_url(battle: &BattleRow, config: &Config) -> Option<String> {
+pub fn get_replay_url(battle: &BattleEntity, config: &Config) -> Option<String> {
     battle
         .replay_hash
         .as_ref()
@@ -132,8 +165,8 @@ pub fn get_replay_url(battle: &BattleRow, config: &Config) -> Option<String> {
 }
 
 /// Represents a possibly failed left join.
-#[derive(Clone, FromRow)]
-pub struct MaybeSkin {
+#[derive(Clone, Debug, FromRow)]
+pub struct MaybeSkinEntity {
     #[sqlx(rename = "skin")]
     name: Option<String>,
     realname: Option<String>,
@@ -141,8 +174,8 @@ pub struct MaybeSkin {
     kartweight: Option<i32>,
 }
 
-impl From<MaybeSkin> for Option<Skin> {
-    fn from(value: MaybeSkin) -> Option<Skin> {
+impl From<MaybeSkinEntity> for Option<Skin> {
+    fn from(value: MaybeSkinEntity) -> Option<Skin> {
         Some(Skin {
             name: value.name?,
             real_name: value.realname?,
@@ -153,8 +186,8 @@ impl From<MaybeSkin> for Option<Skin> {
 }
 
 /// A single participant.
-#[derive(Clone, FromRow)]
-pub struct ParticipantRow {
+#[derive(Clone, Debug, FromRow)]
+pub struct ParticipantEntity {
     // from participants
     pub id: i32,
     pub name: String,
@@ -163,42 +196,29 @@ pub struct ParticipantRow {
     pub finish_time: Option<i32>,
     pub no_contest: bool,
     pub skin_color: Option<String>,
-    // from player table
-    pub short_id: String,
-    pub display_name: String,
-    pub avatar_url: Option<String>,
-    #[sqlx(try_from = "i32")]
-    pub flags: UserFlags,
-    pub ordinal: Option<i32>,
+
+    #[sqlx(skip)]
+    pub user: Option<UserEntity>,
     // from skin table (on good join)
     #[sqlx(flatten)]
-    pub skin: MaybeSkin,
+    pub skin: MaybeSkinEntity,
 }
 
-impl From<ParticipantRow> for Participant {
-    fn from(value: ParticipantRow) -> Participant {
-        Participant {
-            user: User {
-                id: value.short_id,
-                mmr: value.ordinal,
-                display_name: value.display_name,
-                avatar_url: value.avatar_url,
-                flags: value.flags,
-                profiles: None,
-            },
+impl TryFrom<ParticipantEntity> for Participant {
+    type Error = MissingData;
+
+    fn try_from(value: ParticipantEntity) -> Result<Self, Self::Error> {
+        Ok(Participant {
+            user: value.user.map(User::from).ok_or_else(|| MissingData {
+                field_name: String::from("user"),
+            })?,
             name: value.name,
             team: value.team,
             finish_time: value.finish_time,
             no_contest: value.no_contest,
             skin: value.skin.into(),
             skin_color: value.skin_color,
-        }
-    }
-}
-
-impl From<&ParticipantRow> for Participant {
-    fn from(value: &ParticipantRow) -> Participant {
-        value.clone().into()
+        })
     }
 }
 
@@ -207,75 +227,75 @@ pub async fn get_participant_by_short_id(
     battle_id: i32,
     short_id: &str,
     conn: &mut SqliteConnection,
-) -> Result<Option<ParticipantRow>, Error> {
-    sqlx::query_as::<_, ParticipantRow>(
-        r#"
-        SELECT
-            pt.*,
-            u.short_id,
-            u.display_name,
-            u.avatar_url,
-            u.flags,
-            u.ordinal,
-            s.realname,
-            s.kartspeed,
-            s.kartweight
-        FROM
-            participant pt, profile pr, user u
-        LEFT OUTER JOIN
-            skin s ON pt.skin = s.name
-        WHERE
-            u.short_id = $1
-            AND pt.profile_id = pr.id
-            AND u.id = pr.parent_id
-            AND pt.match_id = $2
-        "#,
-    )
-    .bind(short_id)
-    .bind(&battle_id)
-    .fetch_optional(&mut *conn)
-    .await
-    .map_err(Error::from)
+) -> Result<Option<ParticipantEntity>, Error> {
+    use Table::*;
+
+    let (query, values) = select_participants()
+        .and_where(Expr::col((User, "short_id")).eq(short_id))
+        .and_where(Expr::col((Participant, "match_id")).eq(battle_id))
+        .build_sqlx(SqliteQueryBuilder);
+    sqlx::query_with(sqlx::AssertSqlSafe(query), values)
+        .fetch_optional(&mut *conn)
+        .await
+        .and_then(|row| row.map(unpack_participant).transpose())
+        .map_err(Error::from)
 }
 
-/// Preloads the `participants` field of a [`Battle`].
-///
-/// If this function fails, `battle` will not be modified.
-pub async fn preload_participants(
-    battle: &mut Battle,
-    conn: &mut SqliteConnection,
-) -> Result<(), Error> {
-    let participants = sqlx::query_as::<_, ParticipantRow>(
-        r#"
-        SELECT
-            pt.*,
-            u.short_id,
-            u.display_name,
-            u.avatar_url,
-            u.flags,
-            u.ordinal,
-            s.realname,
-            s.kartspeed,
-            s.kartweight
-        FROM
-            participant pt, battle b, profile pr, user u
-        LEFT OUTER JOIN
-            skin s ON pt.skin = s.name
-        WHERE
-            pt.match_id = b.id
-            AND pt.profile_id = pr.id
-            AND u.id = pr.parent_id
-            AND b.uuid = $1
-        "#,
-    )
-    .bind(&battle.id)
-    .fetch_all(&mut *conn)
-    .await?;
+#[derive(Iden)]
+enum Table {
+    User,
+    Participant,
+    Skin,
+}
 
-    battle.participants = participants
-        .into_iter()
-        .map(Participant::from)
-        .collect::<Vec<_>>();
+fn select_participants() -> SelectStatement {
+    use Table::*;
 
-    Ok(())
+    Query::select()
+        .column((Participant, Asterisk))
+        .column((Skin, Asterisk))
+        .expr_as(Expr::col((User, "short_id")), "user_short_id")
+        .expr_as(Expr::col((User, "display_name")), "user_display_name")
+        .expr_as(Expr::col((User, "avatar_url")), "user_avatar_url")
+        .expr_as(Expr::col((User, "flags")), "user_flags")
+        .expr_as(Expr::col((User, "ordinal")), "user_ordinal")
+        .expr_as(Expr::col((User, "inserted_at")), "user_inserted_at")
+        .expr_as(Expr::col((User, "updated_at")), "user_updated_at")
+        .from(Participant)
+        .join(
+            JoinType::Join,
+            User,
+            Expr::col((Participant, "user_id")).equals((User, "id")),
+        )
+        .join(
+            JoinType::LeftJoin,
+            Skin,
+            Expr::col((Participant, "skin")).equals((Skin, "name")),
+        )
+        .take()
+}
+
+fn unpack_participant(row: SqliteRow) -> Result<ParticipantEntity, sqlx::Error> {
+    let participant = ParticipantEntity::from_row(&row)?;
+
+    Ok(ParticipantEntity {
+        user: Some(UserEntity {
+            id: row.try_get("user_id")?,
+            short_id: row.try_get("user_short_id")?,
+            display_name: row.try_get("user_display_name")?,
+            avatar_url: row.try_get("user_avatar_url")?,
+            flags: row
+                .try_get::<i32, _>("user_flags")?
+                .try_into()
+                .map_err(|err| sqlx::Error::ColumnDecode {
+                    index: "user_flags".into(),
+                    source: Box::new(err),
+                })?,
+            ordinal: row.try_get("user_ordinal")?,
+            inserted_at: row.try_get("user_inserted_at")?,
+            updated_at: row.try_get("user_updated_at")?,
+            profiles: None,
+        }),
+        ..participant
+    })
 }

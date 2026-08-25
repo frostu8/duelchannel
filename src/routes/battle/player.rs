@@ -88,5 +88,5 @@ pub async fn update(
 
     tx.commit().await?;
 
-    Ok(Json(participant.into()))
+    Ok(Json(Participant::try_from(participant)?))
 }

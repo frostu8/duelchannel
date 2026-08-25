@@ -18,9 +18,7 @@ use crate::{
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
     error::{Error, ErrorKind},
-    schema::user::{
-        UserBuilder, UserRow, get_user_by_short_id, mmr::init_rating, preload_profiles,
-    },
+    schema::user::{UserBuilder, UserEntity, get_user_by_short_id, mmr::init_rating},
     session::SessionUser,
     validate::Valid,
 };
@@ -108,7 +106,7 @@ where
     Ok(Json(User {
         profiles: Some(profiles),
         mmr,
-        ..User::from(&row)
+        ..User::from(row)
     }))
 }
 
@@ -119,7 +117,7 @@ pub async fn list(
 ) -> Result<Json<Vec<User>>, Error> {
     let mut conn = state.db.acquire().await?;
 
-    let users = sqlx::query_as::<_, UserRow>(
+    let users = sqlx::query_as::<_, UserEntity>(
         r#"
         SELECT *
         FROM user u, profile p
@@ -149,8 +147,8 @@ pub async fn show_self(
     let mut conn = state.db.acquire().await?;
 
     // The authenticated user can see their profiles
-    preload_profiles(&mut user, &mut *conn).await?;
-    Ok(Json(user.into_inner()))
+    user.preload_profiles(&mut conn).await?;
+    Ok(Json(user.into_inner().into()))
 }
 
 /// Shows information about a specific user.

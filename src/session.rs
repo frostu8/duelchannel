@@ -9,8 +9,6 @@ use cookie::{Cookie, SameSite};
 
 use derive_more::{Deref, DerefMut};
 
-use duelchannel_model::CurrentUser;
-
 use time::Duration;
 
 use tower_cookies::Cookies;
@@ -22,7 +20,7 @@ use std::{
 
 use http::request::Parts;
 
-use rand::{Rng, distr::Distribution};
+use rand::{Rng, RngExt as _, distr::Distribution};
 
 use serde::{Deserialize, Serialize};
 
@@ -31,7 +29,7 @@ use tower_sessions::Session as TowerSession;
 use crate::{
     app::AppState,
     error::{Error, ErrorKind},
-    schema::user::get_user,
+    schema::user::{UserEntity, get_user},
 };
 
 pub type SessionError = tower_sessions::session::Error;
@@ -162,13 +160,13 @@ where
 pub struct SessionUser {
     #[deref]
     #[deref_mut]
-    user: CurrentUser,
+    user: UserEntity,
     identity: i32,
 }
 
 impl SessionUser {
-    /// Unwraps the inner user model.
-    pub fn into_inner(self) -> CurrentUser {
+    /// Unwraps the inner user entity.
+    pub fn into_inner(self) -> UserEntity {
         self.user
     }
 
@@ -198,10 +196,7 @@ where
             let user = get_user(identity, &mut *conn).await?;
 
             if let Some(user) = user {
-                Ok(SessionUser {
-                    user: CurrentUser::from(user),
-                    identity,
-                })
+                Ok(SessionUser { user, identity })
             } else {
                 Err(ErrorKind::InvalidSession.into())
             }

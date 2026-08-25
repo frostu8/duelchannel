@@ -23,7 +23,7 @@ use duelchannel_model::{ApiError, rrid::Rrid};
 
 use uuid::Uuid;
 
-use crate::body::Json;
+use crate::{body::Json, schema::MissingData, short_id::IdsExhausted};
 
 /// Application error that may occur during the processing of a request.
 ///
@@ -78,7 +78,7 @@ impl Error {
                 | ErrorKind::Session(_)
                 | ErrorKind::HttpClient(_)
                 | ErrorKind::Discord(_)
-                | ErrorKind::OutOfIds
+                | ErrorKind::IdsExhausted(_)
                 | ErrorKind::Other(_)
         )
     }
@@ -276,6 +276,12 @@ where
     }
 }
 
+impl From<MissingData> for Error {
+    fn from(value: MissingData) -> Self {
+        Error::new(value)
+    }
+}
+
 /// The specific kind of error that happened.
 #[derive(Debug, Display, From)]
 #[non_exhaustive]
@@ -372,8 +378,8 @@ pub enum ErrorKind {
     /// An unhandled database error occured.
     Database(sqlx::Error),
     /// The application failed to generate a unique id.
-    #[display("Ran out of ids")]
-    OutOfIds,
+    #[display("ran out of ids")]
+    IdsExhausted(IdsExhausted),
     /// An error happened.
     ///
     /// Only the message is preserved! All errors of this kind are internal.

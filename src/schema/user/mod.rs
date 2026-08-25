@@ -5,17 +5,14 @@ pub mod mmr;
 use chrono::{DateTime, Utc};
 
 use duelchannel_model::{CurrentUser, Profile, Rrid, User, user::UserFlags};
-use rand::{Rng, SeedableRng, distr::Alphanumeric};
 
-use crate::error::{Error, ErrorKind};
+use crate::{error::Error, short_id};
 
 use sqlx::{FromRow, SqliteConnection};
 
-const MAX_INSERT_ATTEMPTS: usize = 5;
-
-/// A user schema.
-#[derive(Clone, FromRow)]
-pub struct UserRow {
+/// A user entity.
+#[derive(Clone, Debug, FromRow)]
+pub struct UserEntity {
     pub id: i32,
     pub short_id: String,
     pub display_name: String,
@@ -25,36 +22,51 @@ pub struct UserRow {
     pub ordinal: Option<i32>,
     pub inserted_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+
+    #[sqlx(skip)]
+    pub profiles: Option<Vec<ProfileEntity>>,
 }
 
-impl From<UserRow> for CurrentUser {
-    fn from(value: UserRow) -> Self {
+impl UserEntity {
+    /// Preloads a user with their profiles.
+    pub async fn preload_profiles(
+        &mut self,
+        conn: &mut SqliteConnection,
+    ) -> Result<&[ProfileEntity], Error> {
+        let profiles = sqlx::query_as::<_, ProfileEntity>(
+            r#"
+            SELECT *
+            FROM profile
+            WHERE p.parent_id = $1
+            "#,
+        )
+        .bind(self.id)
+        .fetch_all(&mut *conn)
+        .await?;
+
+        self.profiles = Some(profiles);
+        Ok(self.profiles.as_ref().unwrap())
+    }
+}
+
+impl From<UserEntity> for CurrentUser {
+    fn from(value: UserEntity) -> Self {
         CurrentUser { user: value.into() }
     }
 }
 
-impl From<&UserRow> for CurrentUser {
-    fn from(value: &UserRow) -> Self {
-        value.clone().into()
-    }
-}
-
-impl From<UserRow> for User {
-    fn from(value: UserRow) -> Self {
+impl From<UserEntity> for User {
+    fn from(value: UserEntity) -> Self {
         User {
             id: value.short_id,
             display_name: value.display_name,
             avatar_url: value.avatar_url,
             mmr: value.ordinal,
             flags: value.flags,
-            profiles: None,
+            profiles: value
+                .profiles
+                .map(|list| list.into_iter().map(Profile::from).collect()),
         }
-    }
-}
-
-impl From<&UserRow> for User {
-    fn from(value: &UserRow) -> Self {
-        value.clone().into()
     }
 }
 
@@ -90,85 +102,51 @@ impl UserBuilder {
     }
 
     /// Creates the user.
-    pub async fn create(self, conn: &mut SqliteConnection) -> Result<UserRow, Error> {
-        let mut rng = rand::rngs::StdRng::from_os_rng();
-        self.create_with(conn, &mut rng).await
-    }
+    pub async fn create(self, conn: &mut SqliteConnection) -> Result<UserEntity, Error> {
+        // get new allocator
+        let mut allocator = short_id::allocate();
 
-    /// Creates the user with a given PRNG.
-    pub async fn create_with<R>(
-        self,
-        conn: &mut SqliteConnection,
-        rng: &mut R,
-    ) -> Result<UserRow, Error>
-    where
-        R: Rng,
-    {
         let now = Utc::now();
+        let display_name = self.display_name;
+        let avatar_url = self.avatar_url;
+        let flags = self.flags;
 
-        // this is a new player
-        let mut inserted_user = None::<UserRow>;
-
-        for _ in 0..MAX_INSERT_ATTEMPTS {
-            // generate a short id
-            let short_id = rng
-                .sample_iter(Alphanumeric)
-                .take(6)
-                .map(char::from)
-                .map(|c| char::to_ascii_uppercase(&c))
-                .collect::<String>();
-
-            // try to insert with short_id
-            let result = sqlx::query_as::<_, UserRow>(
-                r#"
-                INSERT INTO user
-                    (
-                        inserted_at,
-                        updated_at,
-                        short_id,
-                        display_name,
-                        flags,
-                        avatar_url
+        allocator
+            .insert(conn, |short_id, conn| {
+                let display_name = display_name.clone();
+                let avatar_url = avatar_url.clone();
+                Box::pin(async move {
+                    sqlx::query_as::<_, UserEntity>(
+                        r#"
+                        INSERT INTO user
+                            (
+                                inserted_at,
+                                updated_at,
+                                short_id,
+                                display_name,
+                                flags,
+                                avatar_url
+                            )
+                        VALUES ($1, $1, $2, $3, $4, $5)
+                        RETURNING id, short_id, display_name, avatar_url, flags, ordinal, inserted_at, updated_at
+                        "#,
                     )
-                VALUES ($1, $1, $2, $3, $4, $5)
-                RETURNING id, short_id, display_name, avatar_url, flags, ordinal, inserted_at, updated_at
-                "#,
-            )
-            .bind(now)
-            .bind(&short_id)
-            .bind(&self.display_name)
-            .bind(i32::from(self.flags))
-            .bind(&self.avatar_url)
-            .fetch_one(&mut *conn)
-            .await;
-
-            match result {
-                Ok(user) => {
-                    inserted_user = Some(user);
-                    break;
-                }
-                Err(err) => {
-                    if let Some(db_err) = err.as_database_error() {
-                        // if this is a unique violation, simply try again
-                        if db_err.is_unique_violation() {
-                            tracing::debug!("unique key {} failed, regenerating", short_id);
-                        } else {
-                            return Err(err.into());
-                        }
-                    } else {
-                        return Err(err.into());
-                    }
-                }
-            }
-        }
-
-        inserted_user.ok_or_else(|| ErrorKind::OutOfIds.into())
+                    .bind(now)
+                    .bind(short_id)
+                    .bind(&display_name)
+                    .bind(i32::from(flags))
+                    .bind(&avatar_url)
+                    .fetch_one(&mut *conn)
+                    .await
+                })
+            })
+            .await
     }
 }
 
 /// Gets a user from the database by their ID.
-pub async fn get_user(id: i32, conn: &mut SqliteConnection) -> Result<Option<UserRow>, Error> {
-    sqlx::query_as::<_, UserRow>(
+pub async fn get_user(id: i32, conn: &mut SqliteConnection) -> Result<Option<UserEntity>, Error> {
+    sqlx::query_as::<_, UserEntity>(
         r#"
         SELECT *
         FROM user
@@ -185,8 +163,8 @@ pub async fn get_user(id: i32, conn: &mut SqliteConnection) -> Result<Option<Use
 pub async fn get_user_by_short_id(
     short_id: &str,
     conn: &mut SqliteConnection,
-) -> Result<Option<UserRow>, Error> {
-    sqlx::query_as::<_, UserRow>(
+) -> Result<Option<UserEntity>, Error> {
+    sqlx::query_as::<_, UserEntity>(
         r#"
         SELECT *
         FROM user
@@ -199,12 +177,12 @@ pub async fn get_user_by_short_id(
     .map_err(Error::new)
 }
 
-/// Gets a user from the database by a profile public key
+/// Gets a user from the database by a profile public key.
 pub async fn get_user_by_public_key(
     public_key: &Rrid,
     conn: &mut SqliteConnection,
-) -> Result<Option<UserRow>, Error> {
-    sqlx::query_as::<_, UserRow>(
+) -> Result<Option<UserEntity>, Error> {
+    sqlx::query_as::<_, UserEntity>(
         r#"
         SELECT u.*
         FROM user u, profile pr
@@ -219,32 +197,19 @@ pub async fn get_user_by_public_key(
     .map_err(Error::new)
 }
 
-#[derive(FromRow)]
-struct ProfileRow {
+/// A raw entity for profiles.
+#[derive(Clone, Debug, FromRow)]
+pub struct ProfileEntity {
+    pub id: i32,
+    pub parent_id: i32,
     #[sqlx(try_from = "String")]
     pub public_key: Rrid,
 }
 
-/// Preloads a user with their profiles.
-pub async fn preload_profiles(user: &mut User, conn: &mut SqliteConnection) -> Result<(), Error> {
-    let profiles = sqlx::query_as::<_, ProfileRow>(
-        r#"
-        SELECT p.*
-        FROM profile p, user u
-        WHERE
-            p.parent_id = u.id
-            AND u.short_id = $1
-        "#,
-    )
-    .bind(&user.id)
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .map(|p| Profile {
-        public_key: p.public_key,
-    })
-    .collect::<Vec<_>>();
-
-    user.profiles = Some(profiles);
-    Ok(())
+impl From<ProfileEntity> for Profile {
+    fn from(value: ProfileEntity) -> Self {
+        Profile {
+            public_key: value.public_key,
+        }
+    }
 }
