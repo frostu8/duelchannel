@@ -63,6 +63,8 @@ sea-query-sqlx = { version = "0.9", features = [
   "with-chrono",
   "runtime-tokio",
 ] }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
 
 [workspace]
 resolver = "3"
@@ -83,6 +85,8 @@ serde = { version = "1", features = ["derive"] }
 garde = "0.22"
 serde_repr = "0.1"
 serde_with = "3"
+utoipa = { version = "5", features = ["chrono", "repr", "uuid", "yaml"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 [build-dependencies]
 git2 = "0.21.0"

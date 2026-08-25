@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use serde_with::skip_serializing_none;
 
+use utoipa::ToSchema;
+
 use crate::rrid::Rrid;
 
 /// A query for the list users endpoint.
@@ -18,7 +20,7 @@ pub struct ListUsers {
 /// A request to create a user with some profiles.
 ///
 /// This also initializes the user's rating.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateUser {
     /// The display name of the user.
     ///
@@ -28,7 +30,7 @@ pub struct CreateUser {
 }
 
 /// A profile for [`CreateUser`].
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateUserProfile {
     /// The profile's public key.
     pub public_key: Rrid,

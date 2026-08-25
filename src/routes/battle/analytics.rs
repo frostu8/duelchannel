@@ -2,12 +2,23 @@
 
 use axum::{extract::State, response::IntoResponse};
 use axum_streams::StreamBodyAs;
+use duelchannel_model::battle::BattlePoint;
 use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::{app::AppState, error::Error, entity::battle::analytics::stream_analytics};
 
 /// Fetches analytics about battles.
+///
+/// Streams a JSON array of battle statistics points.
+#[utoipa::path(
+    get,
+    path = "/matches/analytics",
+    tag = "match",
+    responses(
+        (status = 200, description = "A stream of battle statistics", body = Vec<BattlePoint>),
+    ),
+)]
 pub async fn show(State(state): State<AppState>) -> Result<impl IntoResponse, Error> {
     let (tx, rx) = unbounded_channel();
 

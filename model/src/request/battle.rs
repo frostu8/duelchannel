@@ -2,13 +2,15 @@
 
 use serde::{Deserialize, Serialize};
 
+use utoipa::ToSchema;
+
 use crate::{
     battle::{BattleStatus, PlayerTeam},
     profile::{Rrid, Skin},
 };
 
 /// Request to create a match.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateBattleRequest {
     /// The level the battle is taking place on.
     pub level_name: String,
@@ -17,7 +19,7 @@ pub struct CreateBattleRequest {
 }
 
 /// A participant in a [`CreateBattleRequest`].
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateBattleParticipant {
     /// The short ID of the participant.
     pub user_id: String,
@@ -38,7 +40,7 @@ pub struct CreateBattleParticipant {
 /// Request to set the placement of a player.
 ///
 /// This may be updated continuously until the match is ended.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct UpdatePlayerPlacementRequest {
     /// The finishing time of the player.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,7 +50,7 @@ pub struct UpdatePlayerPlacementRequest {
 /// Request to update a match.
 ///
 /// Concluded matches cannot be updated.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct UpdateBattleRequest {
     /// Match status.
     ///

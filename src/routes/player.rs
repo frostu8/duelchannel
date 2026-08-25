@@ -6,12 +6,14 @@ use axum::{
 };
 use chrono::Utc;
 use duelchannel_model::{
-    Profile, Rrid, User,
+    ApiError, Profile, Rrid, User,
     request::user::CreateUser,
     user::{CurrentUser, UserFlags},
 };
 use garde::Validate;
 use serde::Deserialize;
+
+use utoipa::IntoParams;
 
 use crate::{
     app::AppState,
@@ -24,13 +26,17 @@ use crate::{
 };
 
 /// A query for [`list`].
-#[derive(Deserialize, Debug, Validate)]
+#[derive(Deserialize, Debug, Validate, IntoParams)]
 #[serde(default)]
 #[garde(context(AppState as state))]
 pub struct ListUsersQuery {
+    /// The maximum number of users to return.
     #[garde(range(min = 1, max = 50))]
+    #[param(minimum = 1, maximum = 50, default = 20)]
     pub count: i32,
+    /// Filter users by profile public key.
     #[garde(skip)]
+    #[param(value_type = String)]
     pub public_key: Option<Rrid>,
 }
 
@@ -44,6 +50,19 @@ impl Default for ListUsersQuery {
 }
 
 /// Creates a new user.
+#[utoipa::path(
+    post,
+    path = "/players",
+    tag = "player",
+    request_body = CreateUser,
+    responses(
+        (status = 200, description = "The created user", body = User),
+        (status = 400, description = "Invalid request body or profile already in use", body = ApiError),
+        (status = 401, description = "Missing or invalid API key", body = ApiError),
+        (status = 415, description = "Missing or unsupported request content type", body = ApiError),
+    ),
+    security(("apiKey" = [])),
+)]
 pub async fn create<T>(
     _auth_guard: ServerAuthentication,
     State(state): State<AppState>,
@@ -105,6 +124,16 @@ where
 }
 
 /// Lists all users.
+#[utoipa::path(
+    get,
+    path = "/players",
+    tag = "player",
+    params(ListUsersQuery),
+    responses(
+        (status = 200, description = "A list of users", body = Vec<User>),
+        (status = 400, description = "Invalid query parameters", body = ApiError),
+    ),
+)]
 pub async fn list(
     State(state): State<AppState>,
     Valid(Form(query)): Valid<Form<ListUsersQuery>>,
@@ -134,6 +163,16 @@ pub async fn list(
 }
 
 /// Shows the currently authenticated user's details.
+#[utoipa::path(
+    get,
+    path = "/players/~me",
+    tag = "player",
+    responses(
+        (status = 200, description = "The authenticated user", body = CurrentUser),
+        (status = 401, description = "Not authenticated", body = ApiError),
+    ),
+    security(("cookie" = [])),
+)]
 pub async fn show_self(
     mut user: SessionUser,
     State(state): State<AppState>,
@@ -146,6 +185,18 @@ pub async fn show_self(
 }
 
 /// Shows information about a specific user.
+#[utoipa::path(
+    get,
+    path = "/players/{short_id}",
+    tag = "player",
+    params(
+        ("short_id" = String, Path, description = "The short ID of the user"),
+    ),
+    responses(
+        (status = 200, description = "The user", body = User),
+        (status = 404, description = "User not found", body = ApiError),
+    ),
+)]
 pub async fn show(
     Path((short_id,)): Path<(String,)>,
     State(state): State<AppState>,

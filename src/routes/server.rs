@@ -5,11 +5,16 @@ use std::collections::HashMap;
 use axum::extract::State;
 
 use chrono::Utc;
-use duelchannel_model::server::{BannedStatus, MapConfig, Server};
+use duelchannel_model::{
+    ApiError,
+    server::{BannedStatus, MapConfig, Server},
+};
 use garde::Validate;
 use serde::Deserialize;
 use sqlx::{FromRow, SqliteConnection};
 use tracing::instrument;
+
+use utoipa::{IntoParams, ToSchema};
 
 use crate::{
     app::AppState,
@@ -20,7 +25,7 @@ use crate::{
 };
 
 /// An update server request.
-#[derive(Clone, Debug, Deserialize, Validate)]
+#[derive(Clone, Debug, Deserialize, Validate, ToSchema)]
 #[garde(context(AppState as state))]
 pub struct UpdateServerRequest {
     /// The new name of the server.
@@ -36,7 +41,7 @@ pub struct UpdateServerRequest {
 }
 
 /// Map config in [`UpdateServerRequest`].
-#[derive(Clone, Debug, Deserialize, Validate)]
+#[derive(Clone, Debug, Deserialize, Validate, ToSchema)]
 #[garde(context(AppState as state))]
 pub struct UpdateMapConfig {
     /// The title of the map.
@@ -75,7 +80,7 @@ impl From<UpdateMapConfig> for MapConfig {
 }
 
 /// A range of MMRs.
-#[derive(Clone, Debug, Default, Deserialize, Validate)]
+#[derive(Clone, Debug, Default, Deserialize, Validate, ToSchema)]
 #[garde(context(AppState as state))]
 pub struct SkillRange {
     /// The lower bound of the range.
@@ -87,11 +92,13 @@ pub struct SkillRange {
 }
 
 /// A query for [`list`].
-#[derive(Deserialize, Debug, Validate)]
+#[derive(Deserialize, Debug, Validate, IntoParams)]
 #[garde(context(AppState as state))]
 pub struct ListServersQuery {
+    /// The maximum number of servers to return.
     #[garde(range(min = 1, max = 50))]
     #[serde(default = "list_server_count_default")]
+    #[param(minimum = 1, maximum = 50, default = 50)]
     pub count: i32,
 }
 
@@ -117,7 +124,17 @@ struct MapConfigQuery {
     pub skill_upper: Option<i32>,
 }
 
-/// Lists all matches.
+/// Lists all servers.
+#[utoipa::path(
+    get,
+    path = "/servers",
+    tag = "server",
+    params(ListServersQuery),
+    responses(
+        (status = 200, description = "A list of servers", body = Vec<Server>),
+        (status = 400, description = "Invalid query parameters", body = ApiError),
+    ),
+)]
 #[instrument(skip(state))]
 pub async fn list(
     State(state): State<AppState>,
@@ -148,6 +165,16 @@ pub async fn list(
 }
 
 /// Gets the current server.
+#[utoipa::path(
+    get,
+    path = "/servers/~me",
+    tag = "server",
+    responses(
+        (status = 200, description = "The authenticated server", body = Server),
+        (status = 401, description = "Missing or invalid API key", body = ApiError),
+    ),
+    security(("apiKey" = [])),
+)]
 pub async fn show_self(
     auth: ServerAuthentication,
     State(state): State<AppState>,
@@ -166,6 +193,19 @@ pub async fn show_self(
 }
 
 /// Updates the current server.
+#[utoipa::path(
+    patch,
+    path = "/servers/~me",
+    tag = "server",
+    request_body = UpdateServerRequest,
+    responses(
+        (status = 200, description = "The updated server", body = Server),
+        (status = 400, description = "Invalid request body", body = ApiError),
+        (status = 401, description = "Missing or invalid API key", body = ApiError),
+        (status = 415, description = "Missing or unsupported request content type", body = ApiError),
+    ),
+    security(("apiKey" = [])),
+)]
 pub async fn update_self(
     auth: ServerAuthentication,
     State(state): State<AppState>,

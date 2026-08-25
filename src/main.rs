@@ -24,6 +24,7 @@ use duelchannel::{
     auth::oauth2::OauthState,
     cli::{self, AnalyticsCommand, Args, Command, MmrCommand, MmrDump},
     config::{Config, RatingModelConfig, StorageService, read_config},
+    docs::ApiDoc,
     entity::user::mmr::{RatingService, Unrated},
     error::Error,
     mmr::{glicko2::Glicko2, openskill::OpenSkill},
@@ -43,6 +44,9 @@ use tower_sessions::{CachingSessionStore, Expiry, SessionManagerLayer, cookie::S
 use tower_sessions_moka_store::MokaStore;
 use tower_sessions_sqlx_store::SqliteStore;
 
+use utoipa::OpenApi as _;
+use utoipa_swagger_ui::SwaggerUi;
+
 use cookie::Key;
 
 use tracing_subscriber::{
@@ -50,9 +54,6 @@ use tracing_subscriber::{
     fmt,
     layer::SubscriberExt,
 };
-
-const OPENAPI_FILE: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/openapi/openapi.yaml"));
 
 const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -356,10 +357,11 @@ where
     // Finalize router
     let router = Router::new()
         .merge(api_routes.layer(from_fn(security_headers)))
-        // serve openapi spec
+        // serve openapi spec and swagger ui
+        .merge(SwaggerUi::new("/swagger").url("/openapi/openapi.json", ApiDoc::openapi()))
         .merge(
             Router::new()
-                .route("/openapi.yaml", get(serve_openapi))
+                .route("/openapi/openapi.yaml", get(serve_openapi))
                 .layer(
                     CorsLayer::new()
                         .allow_methods([Method::GET])
@@ -415,7 +417,9 @@ async fn serve_openapi() -> impl IntoResponse {
             header::CONTENT_DISPOSITION,
             "attachment; filename=\"openapi.yaml\"",
         )],
-        OPENAPI_FILE,
+        ApiDoc::openapi()
+            .to_yaml()
+            .expect("openapi serializes to yaml"),
     )
 }
 

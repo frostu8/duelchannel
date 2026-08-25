@@ -14,3 +14,4 @@ base16 = { workspace = true }
 derive_more = { workspace = true, features = ["display", "error", "deref", "deref_mut", "from"] }
 bitflags = { workspace = true }
 bytemuck = { workspace = true }
+utoipa = { workspace = true }

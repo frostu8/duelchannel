@@ -24,8 +24,6 @@ pub const X_API_KEY: HeaderName = HeaderName::from_static("x-api-key");
 pub const API_KEY_LENGTH: usize = 64;
 
 /// API key authentication.
-///
-/// Servers can only authenticate with an API key.
 #[derive(Clone, Debug)]
 pub struct ServerAuthentication {
     /// The id of the server in the database.

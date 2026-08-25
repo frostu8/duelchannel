@@ -9,6 +9,7 @@ pub mod auth;
 pub mod body;
 pub mod cli;
 pub mod config;
+pub mod docs;
 pub mod entity;
 pub mod error;
 pub mod mmr;

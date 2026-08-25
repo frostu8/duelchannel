@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
+use utoipa::ToSchema;
+
 /// A single server registered to the API.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct Server {
     /// The unique ID of the server.
     pub id: i32,
@@ -21,7 +23,7 @@ pub struct Server {
 }
 
 /// A config for a specific map.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize, ToSchema)]
 pub struct MapConfig {
     /// The title of the map.
     pub title: String,
@@ -39,7 +41,7 @@ pub struct MapConfig {
 }
 
 /// A range of MMRs.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SkillRange {
     /// The lower bound of the range.
     pub lower: Option<i32>,
@@ -65,6 +67,7 @@ impl SkillRange {
     Serialize_repr,
     IntoPrimitive,
     TryFromPrimitive,
+    ToSchema,
 )]
 #[repr(u8)]
 pub enum BannedStatus {

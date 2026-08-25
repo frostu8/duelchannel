@@ -4,8 +4,10 @@ pub use crate::rrid::Rrid;
 
 use serde::{Deserialize, Serialize};
 
+use utoipa::ToSchema;
+
 /// A profile on the Ring Racers server.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
 pub struct Profile {
     /// The public rrid of the profile.
     ///
@@ -15,7 +17,7 @@ pub struct Profile {
 }
 
 /// A character a player has selected.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct Skin {
     /// The internal name of the character.
     pub name: String,

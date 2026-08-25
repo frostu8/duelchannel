@@ -19,7 +19,10 @@ pub const PUBKEYLENGTH_ENCODED: usize = PUBKEYLENGTH * 2;
 ///
 /// This type has the property that its [`ToString`] implementation produces a
 /// string that can recreate the original `Rrid` using [`FromStr`].
-#[derive(Clone, Debug, Deref, PartialEq, Eq, Hash)]
+///
+/// Represented as a 64-character hexadecimal string.
+#[derive(Clone, Debug, Deref, PartialEq, Eq, Hash, utoipa::ToSchema)]
+#[schema(value_type = String, format = "hex", pattern = "^[0-9A-Fa-f]{64}$")]
 pub struct Rrid([u8; PUBKEYLENGTH]);
 
 impl Rrid {

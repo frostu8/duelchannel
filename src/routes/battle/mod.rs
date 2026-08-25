@@ -16,7 +16,7 @@ use chrono::{DateTime, Utc};
 use garde::Validate;
 
 use duelchannel_model::{
-    User,
+    ApiError, User,
     battle::{Battle, BattleStatus, Participant},
     profile::Skin,
     request::battle::{CreateBattleRequest, UpdateBattleRequest},
@@ -29,6 +29,8 @@ use serde::Deserialize;
 use sqlx::{SqliteConnection, SqlitePool};
 
 use tracing::instrument;
+
+use utoipa::IntoParams;
 
 use uuid::Uuid;
 
@@ -47,15 +49,21 @@ use crate::{
 };
 
 /// A query for [`list`].
-#[derive(Deserialize, Debug, Validate)]
+#[derive(Deserialize, Debug, Validate, IntoParams)]
 #[garde(context(AppState as state))]
 pub struct ListBattlesQuery {
+    /// The maximum number of matches to return.
     #[garde(range(min = 1, max = 50))]
     #[serde(default = "list_battle_count_default")]
+    #[param(minimum = 1, maximum = 50, default = 50)]
     pub count: i32,
+    /// Only return matches inserted before this time.
     #[garde(skip)]
+    #[param(value_type = String, format = "date-time")]
     pub before: Option<DateTime<Utc>>,
+    /// Only return matches inserted after this time.
     #[garde(skip)]
+    #[param(value_type = String, format = "date-time")]
     pub after: Option<DateTime<Utc>>,
 }
 
@@ -64,6 +72,16 @@ fn list_battle_count_default() -> i32 {
 }
 
 /// Lists all matches.
+#[utoipa::path(
+    get,
+    path = "/matches",
+    tag = "match",
+    params(ListBattlesQuery),
+    responses(
+        (status = 200, description = "A list of matches", body = Vec<Battle>),
+        (status = 400, description = "Invalid query parameters", body = ApiError),
+    ),
+)]
 #[instrument(skip(state))]
 pub async fn list(
     State(state): State<AppState>,
@@ -108,6 +126,18 @@ pub async fn list(
 }
 
 /// Shows an existing match.
+#[utoipa::path(
+    get,
+    path = "/matches/{battle_id}",
+    tag = "match",
+    params(
+        ("battle_id" = Uuid, Path, description = "The UUID of the match"),
+    ),
+    responses(
+        (status = 200, description = "The match", body = Battle),
+        (status = 404, description = "Match not found", body = ApiError),
+    ),
+)]
 #[instrument(skip(state))]
 pub async fn show(
     Path((uuid,)): Path<(Uuid,)>,
@@ -163,6 +193,19 @@ async fn upsert_skin(skin: &Skin, conn: &mut SqliteConnection) -> Result<(), Err
 }
 
 /// Creates a match.
+#[utoipa::path(
+    post,
+    path = "/matches",
+    tag = "match",
+    request_body = CreateBattleRequest,
+    responses(
+        (status = 201, description = "The match was created", body = Battle),
+        (status = 400, description = "Invalid request body, missing profile, or duplicate/missing participant", body = ApiError),
+        (status = 401, description = "Missing or invalid API key", body = ApiError),
+        (status = 415, description = "Missing or unsupported request content type", body = ApiError),
+    ),
+    security(("apiKey" = [])),
+)]
 #[instrument(skip(state, model))]
 pub async fn create<T>(
     server_auth: ServerAuthentication,
@@ -306,6 +349,23 @@ where
 }
 
 /// Updates a match.
+#[utoipa::path(
+    patch,
+    path = "/matches/{battle_id}",
+    tag = "match",
+    params(
+        ("battle_id" = Uuid, Path, description = "The UUID of the match"),
+    ),
+    request_body = UpdateBattleRequest,
+    responses(
+        (status = 200, description = "The updated match", body = Battle),
+        (status = 400, description = "Invalid request body or match already concluded", body = ApiError),
+        (status = 401, description = "Missing or invalid API key", body = ApiError),
+        (status = 404, description = "Match not found", body = ApiError),
+        (status = 415, description = "Missing or unsupported request content type", body = ApiError),
+    ),
+    security(("apiKey" = [])),
+)]
 #[instrument(skip(state, model))]
 pub async fn update<T>(
     _auth_guard: ServerAuthentication,

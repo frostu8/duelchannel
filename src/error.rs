@@ -152,7 +152,7 @@ impl Error {
                 },
             ),
             ErrorKind::MissingContentType => (
-                StatusCode::BAD_REQUEST,
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 ApiError {
                     message: "Missing request content type".into(),
                 },
@@ -215,6 +215,18 @@ impl Error {
             // Area for errors we are ok with just using their display impl
             err @ ErrorKind::DuplicateParticipant(_) => (
                 StatusCode::BAD_REQUEST,
+                ApiError {
+                    message: err.to_string(),
+                },
+            ),
+            err @ ErrorKind::MissingProfile(_) => (
+                StatusCode::BAD_REQUEST,
+                ApiError {
+                    message: err.to_string(),
+                },
+            ),
+            err @ ErrorKind::ReplayTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
                 ApiError {
                     message: err.to_string(),
                 },

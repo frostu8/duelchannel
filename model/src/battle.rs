@@ -9,10 +9,12 @@ use serde::{Deserialize, Serialize};
 
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
+use utoipa::ToSchema;
+
 use crate::{profile::Skin, user::User};
 
 /// A single match.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct Battle {
     /// The unique identifier of the match.
     pub id: String,
@@ -34,7 +36,7 @@ pub struct Battle {
 }
 
 /// A participant in a match.
-#[derive(Clone, Debug, Deref, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deref, Deserialize, Serialize, ToSchema)]
 pub struct Participant {
     /// The name of the player.
     pub name: String,
@@ -71,6 +73,7 @@ pub struct Participant {
     Hash,
     TryFromPrimitive,
     IntoPrimitive,
+    ToSchema,
 )]
 #[repr(u8)]
 pub enum BattleStatus {
@@ -94,6 +97,7 @@ pub enum BattleStatus {
     Hash,
     TryFromPrimitive,
     IntoPrimitive,
+    ToSchema,
 )]
 #[repr(u8)]
 pub enum PlayerTeam {
@@ -108,7 +112,7 @@ pub enum PlayerTeam {
 }
 
 /// A compact representation of a match meant to convey some statistics.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct BattlePoint {
     /// The ID of the battle.
     pub id: String,
@@ -118,6 +122,7 @@ pub struct BattlePoint {
     pub margin_score: Option<i32>,
     /// The statistics of the battle.
     #[serde(flatten)]
+    #[schema(inline)]
     pub statistics: BattleStatistics,
 }
 
@@ -125,7 +130,7 @@ pub struct BattlePoint {
 ///
 /// A single battle can be represented as a single point in n-dimensional
 /// space.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 pub struct BattleStatistics {
     /// The average MMR of the match.
     #[serde(default, skip_serializing_if = "Option::is_none")]

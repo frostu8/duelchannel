@@ -3,6 +3,7 @@
 use axum::extract::{Path, State};
 
 use duelchannel_model::{
+    ApiError,
     battle::{BattleStatus, Participant},
     request::battle::UpdatePlayerPlacementRequest,
 };
@@ -22,6 +23,24 @@ use crate::{
 };
 
 /// Updates the placement of a player for a given match.
+#[utoipa::path(
+    patch,
+    path = "/matches/{battle_id}/players/{short_id}",
+    tag = "match",
+    params(
+        ("battle_id" = Uuid, Path, description = "The UUID of the match"),
+        ("short_id" = String, Path, description = "The short ID of the player"),
+    ),
+    request_body = UpdatePlayerPlacementRequest,
+    responses(
+        (status = 200, description = "The updated participant", body = Participant),
+        (status = 400, description = "Invalid request body or match already concluded", body = ApiError),
+        (status = 401, description = "Missing or invalid API key", body = ApiError),
+        (status = 404, description = "Match or participant not found", body = ApiError),
+        (status = 415, description = "Missing or unsupported request content type", body = ApiError),
+    ),
+    security(("apiKey" = [])),
+)]
 #[instrument(skip(state))]
 pub async fn update(
     _auth_guard: ServerAuthentication,

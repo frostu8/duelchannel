@@ -7,7 +7,7 @@ use axum::extract::{Path, State};
 use bytes::Bytes;
 use futures_util::StreamExt as _;
 
-use duelchannel_model::Battle;
+use duelchannel_model::{ApiError, Battle};
 
 use sha2::{Digest as _, Sha256};
 
@@ -25,6 +25,26 @@ use crate::{
 const MAX_REPLAY_SIZE: usize = 1024 * 1024 * 4;
 
 /// Accepts a replay.
+#[utoipa::path(
+    post,
+    path = "/matches/{battle_id}/replay",
+    tag = "match",
+    params(
+        ("battle_id" = Uuid, Path, description = "The UUID of the match"),
+    ),
+    request_body(
+        content_type = "multipart/form-data",
+        description = "A `replay` file field containing the replay (max 4 MiB)",
+    ),
+    responses(
+        (status = 200, description = "The match with the replay attached", body = Battle),
+        (status = 400, description = "Malformed multipart data", body = ApiError),
+        (status = 401, description = "Missing or invalid API key", body = ApiError),
+        (status = 404, description = "Match not found", body = ApiError),
+        (status = 413, description = "Replay too large (over 4 MiB)", body = ApiError),
+    ),
+    security(("apiKey" = [])),
+)]
 pub async fn upload(
     _auth_guard: ServerAuthentication,
     Path((match_id,)): Path<(Uuid,)>,

@@ -7,7 +7,7 @@ use axum::{
 
 use chrono::Utc;
 use derive_more::{Display, Error};
-use duelchannel_model::user::UserFlags;
+use duelchannel_model::{ApiError, user::UserFlags};
 use oauth2::{
     AuthorizationCode, CsrfToken, HttpClientError, RefreshToken, RequestTokenError, Scope,
     StandardRevocableToken, TokenResponse as _,
@@ -34,13 +34,23 @@ struct ExistingUserQuery {
 }
 
 /// A response from the Oauth resource holder.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct LoginResponse {
+    /// The authorization code.
     pub code: String,
+    /// The CSRF state token.
     pub state: String,
 }
 
 /// Redirects a user to the application authorization.
+#[utoipa::path(
+    get,
+    path = "/auth/~redirect",
+    tag = "auth",
+    responses(
+        (status = 302, description = "Redirect to Discord authorization"),
+    ),
+)]
 #[instrument(skip(oauth_state))]
 pub async fn redirect(
     mut session: Session,
@@ -59,6 +69,16 @@ pub async fn redirect(
 }
 
 /// Processes a complete grant request.
+#[utoipa::path(
+    get,
+    path = "/auth/~login",
+    tag = "auth",
+    params(LoginResponse),
+    responses(
+        (status = 302, description = "Redirect to the application after login"),
+        (status = 400, description = "Invalid OAuth2 state", body = ApiError),
+    ),
+)]
 #[instrument(skip(oauth_state))]
 pub async fn login(
     Query(query): Query<LoginResponse>,

@@ -6,14 +6,17 @@ use serde::{Deserialize, Serialize};
 
 use serde_with::{TryFromInto, serde_as};
 
+use utoipa::ToSchema;
+
 use bytemuck::cast;
 
 use crate::Profile;
 
 /// The current user returned by `/users/~me`.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, Deref, DerefMut)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, Deref, DerefMut, ToSchema)]
 pub struct CurrentUser {
     #[serde(flatten)]
+    #[schema(inline)]
     #[deref]
     #[deref_mut]
     pub user: User,
@@ -21,7 +24,7 @@ pub struct CurrentUser {
 
 /// A single user.
 #[serde_as]
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
 pub struct User {
     /// The ID of the user.
     ///
@@ -37,6 +40,7 @@ pub struct User {
     pub mmr: Option<i32>,
     /// The user flags.
     #[serde_as(as = "TryFromInto<i32>")]
+    #[schema(value_type = i32)]
     pub flags: UserFlags,
     /// The user's profiles.
     #[serde(default, skip_serializing_if = "Option::is_none")]
