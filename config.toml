@@ -11,12 +11,7 @@ bucket = "duelchannel-replays-bucket"
 region = "us-east-2"
 
 [mmr]
-model = "openskill"
-command = "uv run --package duelchannel-worker worker/main.py"
-worker_count = 4
-tau = 0.08333333333
-defaults.rating = 25
-defaults.deviation = 8.333333333333
+model = "glicko2"
 
 [http]
 port = 4000

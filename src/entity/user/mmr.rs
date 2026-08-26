@@ -589,6 +589,9 @@ where
     .fetch_all(&mut *conn)
     .await?;
 
+    let grace = model.decay_grace();
+
+    let mut idle_periods = 0.0f32;
     for next_period in ff {
         let started_at = period.started_at;
         let ended_at = next_period.started_at;
@@ -605,9 +608,20 @@ where
             .map(mmr::Matchup::from)
             .collect::<Vec<_>>();
 
+        // Idle periods accumulate, but don't start actually eating at your
+        // deviation until after it passes over the grace period.
+        let period_elapsed = if matchups.is_empty() {
+            idle_periods += 1.0;
+            (idle_periods - grace).clamp(0.0, 1.0)
+        } else {
+            idle_periods = 0.0;
+            1.0
+        };
+
         // Get the player's new rating
-        // Since this period is completed, the period elapsed is always 1.0
-        let new_rating = model.rate(&player, matchups.as_slice(), 1.0).await?;
+        let new_rating = model
+            .rate(&player, matchups.as_slice(), period_elapsed)
+            .await?;
 
         let now = Utc::now();
 
@@ -676,10 +690,18 @@ where
             .map(mmr::Matchup::from)
             .collect::<Vec<_>>();
 
+        // Idle periods accumulate, but don't start actually eating at your
+        // deviation until after it passes over the grace period.
+        let period_elapsed = if matchups.is_empty() {
+            idle_periods += 1.0;
+            (idle_periods - grace).clamp(0.0, 1.0)
+        } else {
+            idle_periods = 0.0;
+            1.0
+        };
+
         // Get the player's new rating
-        let new_rating = model
-            .rate(&player, &matchups, period.period_elapsed)
-            .await?;
+        let new_rating = model.rate(&player, &matchups, period_elapsed).await?;
 
         let now = Utc::now();
 

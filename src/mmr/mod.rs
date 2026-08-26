@@ -60,6 +60,12 @@ pub trait RatingModel: Send + Sync {
 
     /// The time between rating periods.
     fn period(&self) -> TimeDelta;
+
+    /// The number of consecutive idle rating periods a player may accrue
+    /// before rating decay begins.
+    fn decay_grace(&self) -> f32 {
+        0.0
+    }
 }
 
 impl RatingModel for ! {

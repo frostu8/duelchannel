@@ -75,6 +75,10 @@ impl RatingModel for Glicko2 {
     fn period(&self) -> TimeDelta {
         self.config.period
     }
+
+    fn decay_grace(&self) -> f32 {
+        self.config.decay_grace.as_seconds_f32() / self.config.period.as_seconds_f32()
+    }
 }
 
 /// Contains the "volatility" of Glicko2 ratings.
@@ -127,6 +131,12 @@ pub struct Glicko2Config {
     pub tau: f32,
     /// A soft lower limit on rating deviation.
     pub min_deviation: f32,
+    /// How long a player can be inactive before their rating deviation decays.
+    #[serde(
+        deserialize_with = "crate::config::deserialize_duration",
+        serialize_with = "crate::config::serialize_duration"
+    )]
+    pub decay_grace: TimeDelta,
     /// Default settings for new players.
     pub defaults: InitialRating,
 }
@@ -137,6 +147,7 @@ impl Default for Glicko2Config {
             period: TimeDelta::seconds(86_400),
             tau: 0.5,
             min_deviation: 60.0,
+            decay_grace: TimeDelta::weeks(1),
             defaults: InitialRating::default(),
         }
     }
