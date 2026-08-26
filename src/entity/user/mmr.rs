@@ -39,12 +39,13 @@ pub trait RatingService: Send + Sync {
 
     /// Creates a user's rating.
     ///
-    /// This returns the user's ordinal, or `None` if there is no model in-use.
+    /// This returns the user's ordinal and whether or not it should be hidden,
+    /// or `None` if there is no model in-use.
     fn create_rating(
         &self,
         user_id: i32,
         conn: &mut SqliteConnection,
-    ) -> impl Future<Output = Result<Option<i32>, Error>> + Send;
+    ) -> impl Future<Output = Result<Option<(i32, bool)>, Error>> + Send;
 
     /// Updates the ratings of participants in a battle.
     ///
@@ -91,10 +92,10 @@ where
         &self,
         user_id: i32,
         conn: &mut SqliteConnection,
-    ) -> Result<Option<i32>, Error> {
+    ) -> Result<Option<(i32, bool)>, Error> {
         init_rating::<Self::Model>(user_id, self, conn)
             .await
-            .map(|r| r.ordinal() as i32)
+            .map(|r| (r.ordinal() as i32, r.is_provisional()))
             .map(Some)
     }
 
@@ -144,7 +145,7 @@ impl RatingService for Unrated {
         &self,
         _user_id: i32,
         _conn: &mut SqliteConnection,
-    ) -> impl Future<Output = Result<Option<i32>, Error>> + Send {
+    ) -> impl Future<Output = Result<Option<(i32, bool)>, Error>> + Send {
         ready(Ok(None))
     }
 
@@ -326,13 +327,14 @@ where
     sqlx::query(
         r#"
         UPDATE user
-        SET ordinal = $3, updated_at = $1
+        SET ordinal = $3, hide_rating = $4, updated_at = $1
         WHERE id = $2
         "#,
     )
     .bind(now)
     .bind(rating.user_id)
     .bind(rating.ordinal() as i32)
+    .bind(rating.is_provisional())
     .execute(&mut *conn)
     .await?;
 
@@ -499,13 +501,14 @@ where
     sqlx::query(
         r#"
         UPDATE user
-        SET ordinal = $3, updated_at = $1
+        SET ordinal = $3, hide_rating = $4, updated_at = $1
         WHERE id = $2
         "#,
     )
     .bind(now)
     .bind(new_rating.user_id)
     .bind(new_rating.ordinal() as i32)
+    .bind(new_rating.is_provisional())
     .execute(&mut *conn)
     .await?;
 
@@ -629,13 +632,14 @@ where
         sqlx::query(
             r#"
             UPDATE user
-            SET ordinal = $3, updated_at = $2
-            WHERE id = $1
+            SET ordinal = $3, hide_rating = $4, updated_at = $1
+            WHERE id = $2
             "#,
         )
         .bind(now)
-        .bind(player.user_id)
+        .bind(new_rating.user_id)
         .bind(new_rating.ordinal() as i32)
+        .bind(new_rating.is_provisional())
         .execute(&mut *conn)
         .await?;
 
@@ -709,13 +713,14 @@ where
         sqlx::query(
             r#"
             UPDATE user
-            SET ordinal = $3, updated_at = $2
-            WHERE id = $1
+            SET ordinal = $3, hide_rating = $4, updated_at = $1
+            WHERE id = $2
             "#,
         )
         .bind(now)
-        .bind(player.user_id)
+        .bind(new_rating.user_id)
         .bind(new_rating.ordinal() as i32)
+        .bind(new_rating.is_provisional())
         .execute(&mut *conn)
         .await?;
 

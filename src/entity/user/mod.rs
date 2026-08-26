@@ -20,6 +20,7 @@ pub struct UserEntity {
     #[sqlx(try_from = "i32")]
     pub flags: UserFlags,
     pub ordinal: Option<i32>,
+    pub hide_rating: bool,
     pub inserted_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 
@@ -57,11 +58,17 @@ impl From<UserEntity> for CurrentUser {
 
 impl From<UserEntity> for User {
     fn from(value: UserEntity) -> Self {
+        let dr = match value.ordinal {
+            Some(dr) if !value.hide_rating => Some(Some(dr)),
+            Some(_dr) => Some(None),
+            None => None,
+        };
+
         User {
             id: value.short_id,
             display_name: value.display_name,
             avatar_url: value.avatar_url,
-            mmr: value.ordinal,
+            dr,
             flags: value.flags,
             profiles: value
                 .profiles
@@ -128,7 +135,7 @@ impl UserBuilder {
                                 avatar_url
                             )
                         VALUES ($1, $1, $2, $3, $4, $5)
-                        RETURNING id, short_id, display_name, avatar_url, flags, ordinal, inserted_at, updated_at
+                        RETURNING id, short_id, display_name, avatar_url, flags, ordinal, hide_rating, inserted_at, updated_at
                         "#,
                     )
                     .bind(now)

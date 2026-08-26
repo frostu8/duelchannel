@@ -98,6 +98,13 @@ pub trait RatingModelData: Send + Sync + Sized + 'static {
     fn ordinal(rating: &Rating<Self>) -> f32 {
         rating.rating - rating.deviation * 2.0
     }
+
+    /// Whether or not the rating is provisional.
+    ///
+    /// Provisional ratings are hidden from users.
+    fn is_provisional(_rating: &Rating<Self>) -> bool {
+        false
+    }
 }
 
 impl RatingModelData for () {}
@@ -183,9 +190,15 @@ where
 {
     /// The player's ordinal.
     ///
-    /// This is a number where the player's true skill rating is above with a
-    /// 95% chance.
+    /// This is what is actually displayed as their DR.
     pub fn ordinal(&self) -> f32 {
         T::ordinal(self)
+    }
+
+    /// Whether or not the rating is provisional.
+    ///
+    /// Provisional ratings are hidden from users.
+    pub fn is_provisional(&self) -> bool {
+        T::is_provisional(self)
     }
 }

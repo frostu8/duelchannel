@@ -112,13 +112,18 @@ where
     }
 
     // Initialize rating if it's enabled
-    let mmr = model.create_rating(row.id, &mut *tx).await?;
+    let dr = match model.create_rating(row.id, &mut *tx).await? {
+        // (ordinal, hide_rating)
+        Some((dr, false)) => Some(Some(dr)),
+        Some((_dr, true)) => Some(None),
+        None => None,
+    };
 
     tx.commit().await?;
 
     Ok(Json(User {
         profiles: Some(profiles),
-        mmr,
+        dr,
         ..User::from(row)
     }))
 }

@@ -103,6 +103,11 @@ impl RatingModelData for Glicko2Data {
         let deviation = rating.deviation.max(1e-3);
         TOP / (1.0 + 10f32.powf((MID - rating.rating) * SLOPE / deviation))
     }
+
+    fn is_provisional(rating: &Rating<Self>) -> bool {
+        // Only show ratings that are <100 RD
+        rating.deviation > 100.0
+    }
 }
 
 pub type Glicko2Rating = Rating<Glicko2Data>;

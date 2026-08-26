@@ -132,8 +132,14 @@ where
             // CHALLENGER MEDAL for the season
             const CHALLENGER_MEDAL: UserFlags = UserFlags::BETA_CHALLENGER;
 
+            // Do not give awards if the player's ordinal isn't even fucking
+            // visible.
+            if rating.is_provisional() {
+                continue;
+            }
+
             // Only update if the player didn't already have the medal
-            if !player.flags.contains(CHALLENGER_MEDAL) && rating.ordinal().ceil() >= 2000.0 {
+            if !player.flags.contains(CHALLENGER_MEDAL) && rating.ordinal().ceil() >= 18000.0 {
                 sqlx::query(
                     r#"
                         UPDATE user
@@ -258,6 +264,7 @@ fn select_participants() -> SelectStatement {
         .expr_as(Expr::col((User, "avatar_url")), "user_avatar_url")
         .expr_as(Expr::col((User, "flags")), "user_flags")
         .expr_as(Expr::col((User, "ordinal")), "user_ordinal")
+        .expr_as(Expr::col((User, "hide_rating")), "user_hide_rating")
         .expr_as(Expr::col((User, "inserted_at")), "user_inserted_at")
         .expr_as(Expr::col((User, "updated_at")), "user_updated_at")
         .from(Participant)
@@ -291,6 +298,7 @@ fn unpack_participant(row: SqliteRow) -> Result<ParticipantEntity, sqlx::Error> 
                     source: Box::new(err),
                 })?,
             ordinal: row.try_get("user_ordinal")?,
+            hide_rating: row.try_get("user_hide_rating")?,
             inserted_at: row.try_get("user_inserted_at")?,
             updated_at: row.try_get("user_updated_at")?,
             profiles: None,

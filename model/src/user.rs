@@ -35,9 +35,14 @@ pub struct User {
     pub display_name: String,
     /// The URL of the user's avatar.
     pub avatar_url: Option<String>,
-    /// The user's MMR.
+    /// The user's DR.
+    ///
+    /// If this field is absent, skill ratings have been disabled on the
+    /// server. If this field is present but `null`, that means the user's DR
+    /// is currently being calibrated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mmr: Option<i32>,
+    #[schema(nullable)]
+    pub dr: Option<Option<i32>>,
     /// The user flags.
     #[serde_as(as = "TryFromInto<i32>")]
     #[schema(value_type = i32)]
