@@ -80,6 +80,9 @@ pub trait RatingService: Send + Sync {
     ) -> impl Future<Output = eyre::Result<()>> + Send
     where
         W: std::io::Write + Send;
+
+    /// Gets the inner model, or `None` if the service does not provide one.
+    fn model(&self) -> Option<&Self::Model>;
 }
 
 impl<T> RatingService for T
@@ -131,6 +134,10 @@ where
         W: std::io::Write + Send,
     {
         dump_rating(writer, self, conn).await
+    }
+
+    fn model(&self) -> Option<&Self::Model> {
+        Some(self)
     }
 }
 
@@ -185,6 +192,10 @@ impl RatingService for Unrated {
         W: std::io::Write + Send,
     {
         ready(Ok(()))
+    }
+
+    fn model(&self) -> Option<&Self::Model> {
+        None
     }
 }
 

@@ -22,7 +22,7 @@ use axum_server::Handle;
 use duelchannel::{
     app::AppState,
     auth::oauth2::OauthState,
-    cli::{self, AnalyticsCommand, Args, Command, MmrCommand, MmrDump},
+    cli::{self, AnalyticsCommand, Args, Command, MmrCommand, MmrDump, ReplayOptions, replay},
     config::{Config, RatingModelConfig, StorageService, read_config},
     docs::ApiDoc,
     entity::user::mmr::{RatingService, Unrated},
@@ -208,6 +208,27 @@ where
 
                 model.reset(player_ids, &mut *tx).await?;
                 tx.commit().await?;
+            }
+            Command::Mmr(cli::Mmr {
+                command: Some(MmrCommand::Replay(mmr_replay)),
+            }) => {
+                let Some(model) = model.model() else {
+                    tracing::info!("no model given; nothing to do");
+                    std::process::exit(1);
+                };
+
+                let options = ReplayOptions::from(mmr_replay.clone());
+
+                let stdout = tokio::io::stdout();
+                let res = replay(model, stdout, &db, options).await;
+
+                if let Err(err) = res {
+                    // skip broken pipe errors
+                    match err.downcast_ref::<std::io::Error>() {
+                        Some(err) if err.kind() == std::io::ErrorKind::BrokenPipe => (),
+                        _ => return Err(err),
+                    }
+                }
             }
             Command::Mmr(cli::Mmr {
                 command: Some(MmrCommand::Dump(MmrDump { exclude })),

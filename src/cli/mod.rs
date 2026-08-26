@@ -1,5 +1,7 @@
 //! Ring Channel server command-line interface.
 
+pub mod replay;
+
 use std::{
     cmp::min,
     path::PathBuf,
@@ -22,6 +24,8 @@ use crate::{
     auth::api_key::{generate_api_key, hash_api_key},
     entity::{battle::analytics::get_analytics, user::mmr::RatingService},
 };
+
+pub use replay::{ReplayOptions, replay};
 
 /// The command line arguments.
 #[derive(Parser, Debug)]
@@ -99,6 +103,8 @@ pub enum MmrCommand {
     Reset(MmrReset),
     #[command(name = "dump")]
     Dump(MmrDump),
+    #[command(name = "replay")]
+    Replay(MmrReplay),
 }
 
 /// Sample's a given player's MMR.
@@ -112,6 +118,22 @@ pub struct MmrDump {
 /// Resets the MMR of the server.
 #[derive(clap::Args, Debug)]
 pub struct MmrReset;
+
+/// Replays the MMR of the server.
+#[derive(clap::Args, Clone, Debug)]
+pub struct MmrReplay {
+    /// Prints the header.
+    #[arg(short, long)]
+    pub print_header: bool,
+}
+
+impl From<MmrReplay> for ReplayOptions {
+    fn from(value: MmrReplay) -> Self {
+        ReplayOptions {
+            print_header: value.print_header,
+        }
+    }
+}
 
 /// Recalculates battle analytics.
 pub async fn run_battle_analytics<T>(
