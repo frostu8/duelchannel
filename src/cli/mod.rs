@@ -123,14 +123,17 @@ pub struct MmrReset;
 #[derive(clap::Args, Clone, Debug)]
 pub struct MmrReplay {
     /// Prints the header.
-    #[arg(short, long)]
-    pub print_header: bool,
+    #[arg(long, default_value_t = true, overrides_with = "no_header")]
+    pub header: bool,
+    // Disables printing of the header.
+    #[arg(long = "no-header", overrides_with = "header")]
+    pub no_header: bool,
 }
 
 impl From<MmrReplay> for ReplayOptions {
     fn from(value: MmrReplay) -> Self {
         ReplayOptions {
-            print_header: value.print_header,
+            print_header: if value.no_header { false } else { value.header },
         }
     }
 }
