@@ -135,7 +135,7 @@ pub struct InitialRating {
 impl Default for InitialRating {
     fn default() -> Self {
         InitialRating {
-            rating: 1700.0,
+            rating: 1500.0,
             deviation: 350.0,
             volatility: 0.06,
         }

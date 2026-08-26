@@ -5,6 +5,7 @@ authors = ["Dante Helmore <frostu8@protonmail.com>"]
 edition.workspace = true
 
 description = "Backend for duelchannel.ringrace.rs"
+default-run = "duelchannel"
 
 [features]
 tracy = ["tracing-tracy"]
