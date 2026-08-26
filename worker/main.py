@@ -1,12 +1,13 @@
-import sys
 import json
-from dacite import Config
-from enum import unique, Enum
+import sys
+from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Self, TypeVar, Type
-from dataclasses import dataclass, asdict
-from openskill.models import BradleyTerryFull, BradleyTerryFullRating
+from enum import Enum, unique
+from typing import Self, TypeVar
+
 import dacite
+from dacite import Config
+from openskill.models import BradleyTerryFull, BradleyTerryFullRating
 
 model = BradleyTerryFull()
 
@@ -41,28 +42,12 @@ class Rating:
         return model.create_rating([self.rating, self.deviation], str(self.user_id))
 
 @dataclass
-class RatingRecord:
-    """
-    A Duel Channel rating record.
-    """
-
-    user_id: int
-    period_id: int
-    rating: float
-    deviation: float
-    inserted_at: datetime
-    ordinal: float
-
-    def tomodel(self) -> BradleyTerryFullRating:
-        return model.create_rating([self.rating, self.deviation], str(self.user_id))
-
-@dataclass
 class Matchup:
     """
     A Duel Channel matchup.
     """
 
-    opponent: RatingRecord
+    opponent: Rating
     status: BattleStatus
     position: int
     no_contest: bool
@@ -85,7 +70,7 @@ class ModelConfig:
 
 T = TypeVar("T")
 
-def from_dict(ty: Type[T], data: dict) -> T:
+def from_dict(ty: type[T], data: dict) -> T:
     config = Config(cast=[BattleStatus], type_hooks={datetime: datetime.fromisoformat})
     return dacite.from_dict(ty, data, config)
 
@@ -132,7 +117,7 @@ def run():
                     "quality": quality,
                 }
             case "Rate":
-                rating = from_dict(RatingRecord, data["rating"])
+                rating = from_dict(Rating, data["rating"])
                 matchups = [from_dict(Matchup, d) for d in data["matchups"]]
 
                 # Create rating in model

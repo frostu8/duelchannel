@@ -18,8 +18,8 @@ use crate::{
     app::AppState,
     auth::api_key::ServerAuthentication,
     body::{Json, Payload},
-    error::{Error, ErrorKind},
     entity::battle::get_participant_by_short_id,
+    error::{Error, ErrorKind},
 };
 
 /// Updates the placement of a player for a given match.
@@ -93,17 +93,21 @@ pub async fn update(
     }
 
     // UPDATE THAT SHIT KAKAROT!
-    sqlx::query(
+    let res = sqlx::query(
         r#"
         UPDATE participant
-        SET finish_time = IFNULL($2, finish_time)
-        WHERE id = $1
+        SET finish_time = IFNULL($3, finish_time)
+        WHERE id = $1 AND match_id = $2
         "#,
     )
     .bind(participant.id)
+    .bind(battle.id)
     .bind(request.finish_time)
     .execute(&mut *tx)
     .await?;
+
+    // Check to make this skin fuckery never happen again
+    assert!(res.rows_affected() > 0);
 
     tx.commit().await?;
 

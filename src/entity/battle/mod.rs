@@ -250,7 +250,9 @@ fn select_participants() -> SelectStatement {
 
     Query::select()
         .column((Participant, Asterisk))
-        .column((Skin, Asterisk))
+        .column((Skin, "realname"))
+        .column((Skin, "kartspeed"))
+        .column((Skin, "kartweight"))
         .expr_as(Expr::col((User, "short_id")), "user_short_id")
         .expr_as(Expr::col((User, "display_name")), "user_display_name")
         .expr_as(Expr::col((User, "avatar_url")), "user_avatar_url")
