@@ -83,7 +83,23 @@ pub struct Glicko2Data {
     pub volatility: f32,
 }
 
-impl RatingModelData for Glicko2Data {}
+const TOP: f32 = 25000.0;
+const MID: f32 = 1500.0;
+const SLOPE: f32 = 0.117; // regressed from tetr.io 2023 rating data
+
+impl RatingModelData for Glicko2Data {
+    /// Displayed rating.
+    ///
+    /// This is based off tetr.io's "TR" and uses this page on GLIXARE as a
+    /// basis.
+    ///
+    /// Read more:
+    /// <https://www.smogon.com/forums/threads/gxe-glixare-a-much-better-way-of-estimating-a-players-overall-rating-than-shoddys-cre.51169/>
+    fn ordinal(rating: &Rating<Self>) -> f32 {
+        let deviation = rating.deviation.max(1e-3);
+        TOP / (1.0 + 10f32.powf((MID - rating.rating) * SLOPE / deviation))
+    }
+}
 
 pub type Glicko2Rating = Rating<Glicko2Data>;
 
@@ -109,6 +125,8 @@ pub struct Glicko2Config {
     ///
     /// [Glicko-2]: https://www.glicko.net/glicko/glicko2.pdf
     pub tau: f32,
+    /// A soft lower limit on rating deviation.
+    pub min_deviation: f32,
     /// Default settings for new players.
     pub defaults: InitialRating,
 }
@@ -118,6 +136,7 @@ impl Default for Glicko2Config {
         Glicko2Config {
             period: TimeDelta::seconds(86_400),
             tau: 0.5,
+            min_deviation: 60.0,
             defaults: InitialRating::default(),
         }
     }
@@ -231,6 +250,11 @@ fn rate(
         .recip();
     let new_mu = new_phi.powi(2).mul_add(scores, mu);
 
+    // Step 8: EXTRA! Clamp phi with a soft floor function.
+    // Unfortunately, we have to convert min_deviation from ELO to Glicko2
+    // scale...
+    let new_phi = soft_floor_phi(new_phi, phi, to_phi(config.min_deviation));
+
     Rating {
         user_id: player.user_id,
         rating: new_mu.mul_add(173.7178, 1500.0),
@@ -239,6 +263,22 @@ fn rate(
             volatility: new_volatility,
         },
     }
+}
+
+/// Applies a soft lower limit to a Glicko-2 deviation by dampening the change
+/// to phi.
+fn soft_floor_phi(new_phi: f32, old_phi: f32, floor: f32) -> f32 {
+    // Skip if phi increases
+    if floor <= 0.0 || new_phi >= old_phi {
+        return new_phi;
+    }
+
+    if old_phi <= floor {
+        return new_phi.max(old_phi.min(floor).max(0.0));
+    }
+
+    let resistance = ((old_phi - floor) / old_phi).clamp(0.0, 1.0);
+    (floor + (new_phi - floor) * resistance).max(f32::MIN_POSITIVE)
 }
 
 // We can get a rough estimate of what it would like if the player
@@ -366,9 +406,13 @@ fn g_func(phi: f32) -> f32 {
     (1.0 + 3.0 * phi.powi(2) / PI.powi(2)).sqrt().recip()
 }
 
+fn to_phi(deviation: f32) -> f32 {
+    deviation / 173.7178
+}
+
 fn to_glicko2<T>(player: &Rating<T>) -> (f32, f32) {
     let mu = (player.rating - 1500.0) / 173.7178; // Glicko-2 rating
-    let phi = player.deviation / 173.7178; // Glicko-2 deviation
+    let phi = to_phi(player.deviation); // Glicko-2 deviation
 
     (mu, phi)
 }
@@ -376,7 +420,6 @@ fn to_glicko2<T>(player: &Rating<T>) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
 
     fn new_player_rating() -> Glicko2Rating {
         Glicko2Rating {
@@ -391,7 +434,10 @@ mod tests {
     /// <https://www.glicko.net/glicko/glicko2.pdf>
     #[test]
     fn test_glicko2() {
-        let config = Glicko2Config::default();
+        let config = Glicko2Config {
+            min_deviation: 0.0,
+            ..Glicko2Config::default()
+        };
 
         let player = Glicko2Rating {
             rating: 1500.0,
@@ -435,5 +481,22 @@ mod tests {
         assert!((rating.rating - 1464.06).abs() < 0.01);
         assert!((rating.deviation - 151.52).abs() < 0.01);
         assert!((rating.volatility * 1_000_000.0 - 0_059_990.0).abs() < 0_000_010.0);
+    }
+
+    #[test]
+    fn test_soft_floor() {
+        let floor = 60.0;
+
+        let reduced = soft_floor_phi(to_phi(150.0), to_phi(200.0), to_phi(floor));
+        assert!((reduced * 173.7178 - 123.0).abs() < 0.5);
+
+        let near = soft_floor_phi(to_phi(58.0), to_phi(62.0), to_phi(floor));
+        assert!(near * 173.7178 > 59.9 && near * 173.7178 < 60.0);
+
+        let up = soft_floor_phi(to_phi(80.0), to_phi(60.0), to_phi(floor));
+        assert!((up * 173.7178 - 80.0).abs() < 1e-3);
+
+        let off = soft_floor_phi(to_phi(50.0), to_phi(200.0), 0.0);
+        assert!((off * 173.7178 - 50.0).abs() < 1e-3);
     }
 }
