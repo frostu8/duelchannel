@@ -124,7 +124,7 @@ where
     Ok(Json(User {
         profiles: Some(profiles),
         dr,
-        ..User::from(row)
+        ..User::try_from(row)?
     }))
 }
 
@@ -159,12 +159,15 @@ pub async fn list(
     .bind(query.count)
     .bind(query.public_key.as_ref().map(|s| s.as_bytes()))
     .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .map(|u| User::from(u))
-    .collect::<Vec<_>>();
+    .await?;
 
-    Ok(Json(users))
+    let mut out = Vec::with_capacity(users.len());
+    for mut user in users {
+        user.preload_statistics(&mut conn).await?;
+        out.push(User::try_from(user)?);
+    }
+
+    Ok(Json(out))
 }
 
 /// Shows the currently authenticated user's details.
@@ -184,9 +187,11 @@ pub async fn show_self(
 ) -> Result<Json<CurrentUser>, Error> {
     let mut conn = state.db.acquire().await?;
 
+    user.preload_statistics(&mut conn).await?;
     // The authenticated user can see their profiles
     user.preload_profiles(&mut conn).await?;
-    Ok(Json(user.into_inner().into()))
+
+    Ok(Json(user.into_inner().try_into()?))
 }
 
 /// Shows information about a specific user.
@@ -208,7 +213,10 @@ pub async fn show(
 ) -> Result<Json<User>, Error> {
     let mut conn = state.db.acquire().await?;
     match get_user_by_short_id(&short_id, &mut *conn).await? {
-        Some(user) => Ok(Json(User::from(user))),
+        Some(mut user) => {
+            user.preload_statistics(&mut conn).await?;
+            Ok(Json(User::try_from(user)?))
+        }
         None => Err(Error::not_found(format!(
             "user w/ id {} not found",
             short_id

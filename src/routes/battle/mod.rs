@@ -245,10 +245,11 @@ where
     let mut participants = Vec::with_capacity(request.participants.len());
     for input_player in request.participants.into_iter() {
         let profile_user = get_user_by_public_key(&input_player.public_key, &mut *tx).await?;
-        let Some(profile_user) = profile_user else {
+        let Some(mut profile_user) = profile_user else {
             tx.rollback().await?;
             return Err(ErrorKind::MissingProfile(input_player.public_key).into());
         };
+        profile_user.preload_statistics(&mut *tx).await?;
 
         if short_ids.contains(&input_player.user_id) {
             return Err(ErrorKind::DuplicateParticipant(input_player.user_id).into());
@@ -305,7 +306,7 @@ where
 
         // insert players to vec
         participants.push(Participant {
-            user: User::from(profile_user),
+            user: User::try_from(profile_user)?,
             name: input_player.name,
             team: input_player.team,
             finish_time: None,

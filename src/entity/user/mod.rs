@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 
 use duelchannel_model::{CurrentUser, Profile, Rrid, User, user::UserFlags};
 
-use crate::{error::Error, short_id};
+use crate::{entity::MissingData, error::Error, short_id};
 
 use sqlx::{FromRow, SqliteConnection};
 
@@ -26,9 +26,20 @@ pub struct UserEntity {
 
     #[sqlx(skip)]
     pub profiles: Option<Vec<ProfileEntity>>,
+    #[sqlx(skip)]
+    pub statistics: Option<UserStatistics>,
 }
 
 impl UserEntity {
+    /// Fetches a user's statistics, and attaches it to the entity.
+    pub async fn preload_statistics(
+        &mut self,
+        conn: &mut SqliteConnection,
+    ) -> Result<&UserStatistics, Error> {
+        self.statistics = Some(get_user_statistics(self.id, conn).await?);
+        Ok(self.statistics.as_ref().unwrap())
+    }
+
     /// Preloads a user with their profiles.
     pub async fn preload_profiles(
         &mut self,
@@ -50,31 +61,82 @@ impl UserEntity {
     }
 }
 
-impl From<UserEntity> for CurrentUser {
-    fn from(value: UserEntity) -> Self {
-        CurrentUser { user: value.into() }
+impl TryFrom<UserEntity> for CurrentUser {
+    type Error = MissingData;
+
+    fn try_from(value: UserEntity) -> Result<Self, Self::Error> {
+        Ok(CurrentUser {
+            user: value.try_into()?,
+        })
     }
 }
 
-impl From<UserEntity> for User {
-    fn from(value: UserEntity) -> Self {
+impl TryFrom<UserEntity> for User {
+    type Error = MissingData;
+
+    fn try_from(value: UserEntity) -> Result<Self, Self::Error> {
         let dr = match value.ordinal {
             Some(dr) if !value.hide_rating => Some(Some(dr)),
             Some(_dr) => Some(None),
             None => None,
         };
 
-        User {
+        let statistics = value.statistics.ok_or_else(|| MissingData {
+            field_name: "statistics".into(),
+        })?;
+        let matches_played = statistics.wins + statistics.losses;
+
+        Ok(User {
             id: value.short_id,
             display_name: value.display_name,
             avatar_url: value.avatar_url,
             dr,
+            matches_played,
+            win_ratio: if matches_played > 0 {
+                statistics.wins as f32 / matches_played as f32
+            } else {
+                0.0
+            },
             flags: value.flags,
             profiles: value
                 .profiles
                 .map(|list| list.into_iter().map(Profile::from).collect()),
-        }
+        })
     }
+}
+
+/// User statistics.
+#[derive(Clone, Debug, Default, FromRow)]
+pub struct UserStatistics {
+    /// The amount of wins a player has accrued.
+    pub wins: i32,
+    /// The amount of losses a player has accrued.
+    pub losses: i32,
+}
+
+/// Gets statistics for a specific user.
+pub async fn get_user_statistics(
+    user_id: i32,
+    conn: &mut SqliteConnection,
+) -> Result<UserStatistics, Error> {
+    sqlx::query_as::<_, UserStatistics>(
+        r#"
+        SELECT
+            COUNT(p.id) FILTER (WHERE p.no_contest = false) AS wins,
+            COUNT(p.id) FILTER (WHERE p.no_contest = true) AS losses
+        FROM user u
+        LEFT JOIN participant p ON p.user_id = u.id
+        LEFT JOIN battle b ON p.match_id = b.id
+        WHERE
+            u.id = $1
+            AND b.status = 1
+        GROUP BY u.id
+        "#,
+    )
+    .bind(user_id)
+    .fetch_one(conn)
+    .await
+    .map_err(Error::from)
 }
 
 /// A builder for a user.
@@ -145,6 +207,10 @@ impl UserBuilder {
                     .bind(&avatar_url)
                     .fetch_one(&mut *conn)
                     .await
+                    .map(|u| UserEntity {
+                            statistics: Some(UserStatistics::default()),
+                            ..u
+                        })
                 })
             })
             .await

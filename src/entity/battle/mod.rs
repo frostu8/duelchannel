@@ -59,11 +59,18 @@ impl BattleEntity {
         let (query, values) = select_participants()
             .and_where(Expr::col((Table::Participant, "match_id")).eq(self.id))
             .build_sqlx(SqliteQueryBuilder);
-        let participants = sqlx::query_with(sqlx::AssertSqlSafe(query), values)
+        let mut participants = sqlx::query_with(sqlx::AssertSqlSafe(query), values)
             .try_map(unpack_participant)
             .fetch_all(&mut *conn)
             .await
             .map_err(Error::from)?;
+
+        for p in participants.iter_mut() {
+            if let Some(user) = p.user.as_mut() {
+                user.preload_statistics(conn).await?;
+            }
+        }
+
         self.participants = Some(participants);
         Ok(self.participants.as_ref().unwrap())
     }
@@ -212,9 +219,12 @@ impl TryFrom<ParticipantEntity> for Participant {
 
     fn try_from(value: ParticipantEntity) -> Result<Self, Self::Error> {
         Ok(Participant {
-            user: value.user.map(User::from).ok_or_else(|| MissingData {
-                field_name: String::from("user"),
-            })?,
+            user: value
+                .user
+                .ok_or_else(|| MissingData {
+                    field_name: String::from("user"),
+                })
+                .and_then(User::try_from)?,
             name: value.name,
             team: value.team,
             finish_time: value.finish_time,
@@ -237,11 +247,21 @@ pub async fn get_participant_by_short_id(
         .and_where(Expr::col((User, "short_id")).eq(short_id))
         .and_where(Expr::col((Participant, "match_id")).eq(battle_id))
         .build_sqlx(SqliteQueryBuilder);
-    sqlx::query_with(sqlx::AssertSqlSafe(query), values)
+    let participant = sqlx::query_with(sqlx::AssertSqlSafe(query), values)
         .fetch_optional(&mut *conn)
         .await
         .and_then(|row| row.map(unpack_participant).transpose())
-        .map_err(Error::from)
+        .map_err(Error::from)?;
+
+    let Some(mut participant) = participant else {
+        return Ok(None);
+    };
+
+    if let Some(user) = participant.user.as_mut() {
+        user.preload_statistics(conn).await?;
+    }
+
+    Ok(Some(participant))
 }
 
 #[derive(Iden)]
@@ -301,6 +321,7 @@ fn unpack_participant(row: SqliteRow) -> Result<ParticipantEntity, sqlx::Error> 
             hide_rating: row.try_get("user_hide_rating")?,
             inserted_at: row.try_get("user_inserted_at")?,
             updated_at: row.try_get("user_updated_at")?,
+            statistics: None,
             profiles: None,
         }),
         ..participant

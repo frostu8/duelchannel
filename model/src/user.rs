@@ -13,7 +13,7 @@ use bytemuck::cast;
 use crate::Profile;
 
 /// The current user returned by `/users/~me`.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, Deref, DerefMut, ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Deref, DerefMut, ToSchema)]
 pub struct CurrentUser {
     #[serde(flatten)]
     #[schema(inline)]
@@ -24,7 +24,7 @@ pub struct CurrentUser {
 
 /// A single user.
 #[serde_as]
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, ToSchema)]
 pub struct User {
     /// The ID of the user.
     ///
@@ -47,6 +47,12 @@ pub struct User {
     #[serde_as(as = "TryFromInto<i32>")]
     #[schema(value_type = i32)]
     pub flags: UserFlags,
+    /// How many matches the user has played.
+    pub matches_played: i32,
+    /// The win/loss ratio of the user.
+    ///
+    /// If the user has not played any matches, this is `0.0`.
+    pub win_ratio: f32,
     /// The user's profiles.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profiles: Option<Vec<Profile>>,
