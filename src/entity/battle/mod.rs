@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use duelchannel_model::{
     battle::{Battle, BattleStatus, Participant, PlayerTeam},
     profile::Skin,
-    user::{User, UserFlags},
+    user::User,
 };
 
 use rand::{RngExt as _, SeedableRng as _, rngs::StdRng};
@@ -22,12 +22,8 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    entity::{
-        MissingData,
-        user::{UserEntity, mmr::update_ratings},
-    },
+    entity::{MissingData, user::UserEntity},
     error::Error,
-    mmr::RatingModel,
     short_id::IdsExhausted,
 };
 
@@ -213,79 +209,6 @@ impl BattleBuilder {
     }
 }
 
-/// Update ratings of all participants in a match.
-pub async fn update_participant_ratings<T>(
-    battle_id: i32,
-    model: &T,
-    config: &Config,
-    conn: &mut SqliteConnection,
-) -> Result<(), Error>
-where
-    T: RatingModel,
-{
-    #[derive(FromRow)]
-    struct Query {
-        id: i32,
-        #[sqlx(try_from = "i32")]
-        flags: UserFlags,
-    }
-
-    // Fetch players
-    let players = sqlx::query_as::<_, Query>(
-        r#"
-        SELECT u.id, u.flags
-        FROM participant p, user u
-        WHERE
-            p.match_id = $1
-            AND p.user_id = u.id
-        "#,
-    )
-    .bind(battle_id)
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .collect::<Vec<_>>();
-
-    // Only update if there was more than 1 participant
-    if players.len() > 1 {
-        let ids = players.iter().map(|s| s.id).collect::<Vec<_>>();
-        let ratings = update_ratings(&ids, model, &mut *conn).await?;
-
-        // Grant awards
-        for (player, rating) in players.into_iter().zip(ratings) {
-            let mut flags = player.flags;
-            let awards = config
-                .awards
-                .iter()
-                .filter(|award| award.threshold <= rating.ordinal() as i32)
-                .filter(|award| !rating.is_provisional() || award.award_provisional);
-
-            // Award these guys
-            for award in awards {
-                flags |= award.awards;
-            }
-
-            // Only update if the player's flags actually changed
-            if flags != player.flags {
-                sqlx::query(
-                    r#"
-                        UPDATE user
-                        SET updated_at = $2, flags = $3
-                        WHERE id = $1
-                        "#,
-                )
-                .bind(player.id)
-                .bind(Utc::now())
-                .bind(i32::from(flags))
-                .execute(&mut *conn)
-                .await?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Gets the replay url of a battle.
 pub fn get_replay_url(battle: &BattleEntity, config: &Config) -> Option<String> {
     battle
@@ -321,6 +244,7 @@ impl From<MaybeSkinEntity> for Option<Skin> {
 pub struct ParticipantEntity {
     // from participants
     pub id: i32,
+    pub user_id: i32,
     pub name: String,
     #[sqlx(try_from = "u8")]
     pub team: PlayerTeam,

@@ -5,8 +5,10 @@ pub mod mmr;
 use chrono::{DateTime, Utc};
 
 use duelchannel_model::{CurrentUser, Profile, Rrid, User, user::UserFlags};
+use sea_query::{Expr, ExprTrait as _, Iden, JoinType, Query, SqliteQueryBuilder};
+use sea_query_sqlx::SqlxBinder as _;
 
-use crate::{entity::MissingData, error::Error, short_id};
+use crate::{config::Config, entity::MissingData, error::Error, mmr::RatingModel, short_id};
 
 use sqlx::{FromRow, SqliteConnection};
 
@@ -286,6 +288,89 @@ pub async fn get_user_by_public_key(
     .fetch_optional(&mut *conn)
     .await
     .map_err(Error::new)
+}
+
+#[derive(Iden)]
+enum Table {
+    User,
+    Participant,
+}
+
+/// Update ratings of all users passed to the function.
+pub async fn update_ratings<T>(
+    user_ids: &[i32],
+    model: &T,
+    config: &Config,
+    conn: &mut SqliteConnection,
+) -> Result<(), Error>
+where
+    T: RatingModel,
+{
+    #[derive(FromRow)]
+    struct UserRow {
+        id: i32,
+        #[sqlx(try_from = "i32")]
+        flags: UserFlags,
+    }
+
+    // Fetch players
+    let (query, values) = Query::select()
+        .column((Table::User, "id"))
+        .column((Table::User, "flags"))
+        .from(Table::User)
+        .join(
+            JoinType::Join,
+            Table::Participant,
+            Expr::col((Table::User, "id")).equals((Table::Participant, "user_id")),
+        )
+        .and_where(Expr::col((Table::User, "id")).is_in(user_ids))
+        .build_sqlx(SqliteQueryBuilder);
+
+    let players = sqlx::query_as_with::<_, UserRow, _>(sqlx::AssertSqlSafe(query), values)
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    // Only update if there was more than 1 participant
+    if players.len() == 0 {
+        return Ok(());
+    }
+
+    let ratings = mmr::update_ratings(&user_ids, model, &mut *conn).await?;
+
+    // Grant awards
+    for (player, rating) in players.into_iter().zip(ratings) {
+        let mut flags = player.flags;
+        let awards = config
+            .awards
+            .iter()
+            .filter(|award| award.threshold <= rating.ordinal() as i32)
+            .filter(|award| !rating.is_provisional() || award.award_provisional);
+
+        // Award these guys
+        for award in awards {
+            flags |= award.awards;
+        }
+
+        // Only update if the player's flags actually changed
+        if flags != player.flags {
+            sqlx::query(
+                r#"
+                    UPDATE user
+                    SET updated_at = $2, flags = $3
+                    WHERE id = $1
+                    "#,
+            )
+            .bind(player.id)
+            .bind(Utc::now())
+            .bind(i32::from(flags))
+            .execute(&mut *conn)
+            .await?;
+        }
+    }
+
+    Ok(())
 }
 
 /// A raw entity for profiles.

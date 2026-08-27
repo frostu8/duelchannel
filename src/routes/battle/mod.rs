@@ -371,6 +371,8 @@ where
     let Some(mut battle) = battle else {
         return Err(Error::not_found(format!("Match {} not found", uuid)));
     };
+
+    battle.preload_participants(&mut *tx).await?;
     let battle_id = battle.id;
 
     // Verify changes
@@ -438,13 +440,18 @@ where
     if request.status == Some(BattleStatus::Concluded)
         || request.status == Some(BattleStatus::Cancelled)
     {
+        let participants = battle.participants.as_ref().expect("preloaded");
+        let user_ids = participants
+            .into_iter()
+            .map(|p| p.user_id)
+            .collect::<Vec<_>>();
+
         model
-            .update_ratings(battle.id, &state.config, &mut *tx)
+            .update_ratings(user_ids.as_slice(), &state.config, &mut *tx)
             .await?;
     }
 
     // Create battle response
-    battle.preload_participants(&mut *tx).await?;
     let replay_url = get_replay_url(&battle, &state.config);
 
     let mut battle = Battle::try_from(battle)?;

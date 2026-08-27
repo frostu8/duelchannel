@@ -19,7 +19,7 @@ use crate::{
     app::AppState,
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
-    entity::user::{UserEntity, build_user, get_user_by_short_id, mmr::RatingService},
+    entity::user::{build_user, get_user, mmr::RatingService},
     error::{Error, ErrorKind},
     session::SessionUser,
     validate::Valid,
@@ -139,15 +139,19 @@ where
         (status = 400, description = "Invalid query parameters", body = ApiError),
     ),
 )]
-pub async fn list(
+pub async fn list<T>(
     State(state): State<AppState>,
+    Extension(model): Extension<T>,
     Valid(Form(query)): Valid<Form<ListUsersQuery>>,
-) -> Result<Json<Vec<User>>, Error> {
-    let mut conn = state.db.acquire().await?;
+) -> Result<Json<Vec<User>>, Error>
+where
+    T: RatingService,
+{
+    let mut tx = state.db.begin().await?;
 
-    let users = sqlx::query_as::<_, UserEntity>(
+    let user_ids = sqlx::query_as::<_, (i32,)>(
         r#"
-        SELECT *
+        SELECT u.id
         FROM user u, profile p
         WHERE
             p.parent_id = u.id
@@ -158,14 +162,25 @@ pub async fn list(
     )
     .bind(query.count)
     .bind(query.public_key.as_ref().map(|s| s.as_bytes()))
-    .fetch_all(&mut *conn)
-    .await?;
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .map(|(id,)| id)
+    .collect::<Vec<_>>();
 
-    let mut out = Vec::with_capacity(users.len());
-    for mut user in users {
-        user.preload_statistics(&mut conn).await?;
+    model
+        .update_ratings(user_ids.as_slice(), &state.config, &mut *tx)
+        .await?;
+
+    let mut out = Vec::with_capacity(user_ids.len());
+    for user_id in user_ids {
+        let mut user = get_user(user_id, &mut *tx).await?.expect("valid user");
+        user.preload_statistics(&mut *tx).await?;
+
         out.push(User::try_from(user)?);
     }
+
+    tx.commit().await?;
 
     Ok(Json(out))
 }
@@ -181,17 +196,28 @@ pub async fn list(
     ),
     security(("cookie" = [])),
 )]
-pub async fn show_self(
-    mut user: SessionUser,
+pub async fn show_self<T>(
+    user: SessionUser,
+    Extension(model): Extension<T>,
     State(state): State<AppState>,
-) -> Result<Json<CurrentUser>, Error> {
-    let mut conn = state.db.acquire().await?;
+) -> Result<Json<CurrentUser>, Error>
+where
+    T: RatingService,
+{
+    let mut tx = state.db.begin().await?;
 
-    user.preload_statistics(&mut conn).await?;
+    model
+        .update_ratings(&[user.id], &state.config, &mut *tx)
+        .await?;
+
+    let mut user = get_user(user.id, &mut *tx).await?.expect("valid_user");
+    user.preload_statistics(&mut *tx).await?;
     // The authenticated user can see their profiles
-    user.preload_profiles(&mut conn).await?;
+    user.preload_profiles(&mut *tx).await?;
 
-    Ok(Json(user.into_inner().try_into()?))
+    tx.commit().await?;
+
+    Ok(Json(user.try_into()?))
 }
 
 /// Shows information about a specific user.
@@ -207,19 +233,43 @@ pub async fn show_self(
         (status = 404, description = "User not found", body = ApiError),
     ),
 )]
-pub async fn show(
+pub async fn show<T>(
     Path((short_id,)): Path<(String,)>,
+    Extension(model): Extension<T>,
     State(state): State<AppState>,
-) -> Result<Json<User>, Error> {
-    let mut conn = state.db.acquire().await?;
-    match get_user_by_short_id(&short_id, &mut *conn).await? {
-        Some(mut user) => {
-            user.preload_statistics(&mut conn).await?;
-            Ok(Json(User::try_from(user)?))
-        }
-        None => Err(Error::not_found(format!(
+) -> Result<Json<User>, Error>
+where
+    T: RatingService,
+{
+    let mut tx = state.db.begin().await?;
+
+    let user_id = sqlx::query_as::<_, (i32,)>(
+        r#"
+        SELECT id
+        FROM user
+        WHERE short_id = $1
+        "#,
+    )
+    .bind(&short_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((user_id,)) = user_id else {
+        return Err(Error::not_found(format!(
             "user w/ id {} not found",
             short_id
-        ))),
-    }
+        )));
+    };
+
+    model
+        .update_ratings(&[user_id], &state.config, &mut *tx)
+        .await?;
+
+    let mut user = get_user(user_id, &mut *tx).await?.expect("valid_user");
+    user.preload_statistics(&mut *tx).await?;
+    // The authenticated user can see their profiles
+    user.preload_profiles(&mut *tx).await?;
+
+    tx.commit().await?;
+
+    Ok(Json(user.try_into()?))
 }

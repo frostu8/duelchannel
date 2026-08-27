@@ -19,9 +19,8 @@ use sqlx::{FromRow, Row as _, SqliteConnection, sqlite::SqliteRow};
 
 use tracing::instrument;
 
-use crate::config::Config;
 use crate::{
-    entity::battle::update_participant_ratings,
+    config::Config,
     error::Error,
     mmr::{self, Rating, RatingModel},
 };
@@ -49,12 +48,10 @@ pub trait RatingService: Send + Sync {
         conn: &mut SqliteConnection,
     ) -> impl Future<Output = Result<Option<(i32, bool)>, Error>> + Send;
 
-    /// Updates the ratings of participants in a battle.
-    ///
-    /// If the participants are not already preloaded, this will preload them.
+    /// Updates the ratings of a list of users.
     fn update_ratings(
         &self,
-        battle_id: i32,
+        user_ids: &[i32],
         config: &Config,
         conn: &mut SqliteConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send;
@@ -107,11 +104,11 @@ where
 
     async fn update_ratings(
         &self,
-        battle_id: i32,
+        user_ids: &[i32],
         config: &Config,
         conn: &mut SqliteConnection,
     ) -> Result<(), Error> {
-        update_participant_ratings(battle_id, self, config, conn).await
+        super::update_ratings(user_ids, self, config, conn).await
     }
 
     async fn quality_1v1(
@@ -162,7 +159,7 @@ impl RatingService for Unrated {
 
     fn update_ratings(
         &self,
-        _battle_id: i32,
+        _user_ids: &[i32],
         _config: &Config,
         _conn: &mut SqliteConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send {
@@ -609,7 +606,6 @@ where
             .execute(&mut *conn)
             .await?;
 
-            println!("new rating: {}", new_rating.ordinal());
             rating.rating = new_rating.rating;
             rating.deviation = new_rating.deviation;
             rating.extra = new_rating.extra;
