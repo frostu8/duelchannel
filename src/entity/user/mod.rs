@@ -129,15 +129,14 @@ pub async fn get_user_statistics(
         FROM user u
         LEFT JOIN participant p ON p.user_id = u.id
         LEFT JOIN battle b ON p.match_id = b.id
-        WHERE
-            u.id = $1
-            AND (b.status IS NULL OR b.status = 1)
+        WHERE u.id = $1 AND b.status = 1
         GROUP BY u.id
         "#,
     )
     .bind(user_id)
-    .fetch_one(conn)
+    .fetch_optional(conn)
     .await
+    .map(|stats| stats.unwrap_or_default())
     .map_err(Error::from)
 }
 
