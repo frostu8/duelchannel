@@ -19,7 +19,7 @@ use crate::{
     app::AppState,
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
-    entity::user::{UserBuilder, UserEntity, get_user_by_short_id, mmr::RatingService},
+    entity::user::{UserEntity, build_user, get_user_by_short_id, mmr::RatingService},
     error::{Error, ErrorKind},
     session::SessionUser,
     validate::Valid,
@@ -77,7 +77,7 @@ where
     let mut tx = state.db.begin().await?;
 
     // Create user based off specs
-    let row = UserBuilder::new(request.display_name)
+    let row = build_user(request.display_name)
         .flags(UserFlags::BETA_TESTER)
         .create(&mut *tx)
         .await?;

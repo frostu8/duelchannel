@@ -41,7 +41,7 @@ use crate::{
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
     entity::{
-        battle::{BattleEntity, analytics::get_analytics, get_replay_url},
+        battle::{BattleEntity, analytics::get_analytics, build_battle, get_replay_url},
         user::{get_user_by_public_key, mmr::RatingService},
     },
     error::{Error, ErrorKind},
@@ -216,28 +216,16 @@ pub async fn create<T>(
 where
     T: RatingService + Clone + Send + Sync + 'static,
 {
+    let mut tx = state.db.begin().await?;
     let now = Utc::now();
 
-    let mut tx = state.db.begin().await?;
-
-    // Generate new UUID
-    let uuid = Uuid::new_v4();
-
     // Create the battle
-    let (match_id,) = sqlx::query_as::<_, (i32,)>(
-        r#"
-        INSERT INTO battle (inserted_at, updated_at, server_id, uuid, level_name, status)
-        VALUES ($1, $1, $2, $3, $4, $5)
-        RETURNING id
-        "#,
-    )
-    .bind(now)
-    .bind(server_auth.id)
-    .bind(uuid.hyphenated().to_string())
-    .bind(&request.level_name)
-    .bind(u8::from(BattleStatus::Ongoing))
-    .fetch_one(&mut *tx)
-    .await?;
+    let battle = build_battle(request.level_name)
+        .server_id(server_auth.id)
+        .timestamp(now)
+        .create(&mut *tx)
+        .await?;
+    let battle_id = battle.id;
 
     // register players
     let mut short_ids = HashSet::new();
@@ -292,7 +280,7 @@ where
             "#,
         )
         .bind(input_player.public_key.as_bytes())
-        .bind(match_id)
+        .bind(battle_id)
         .bind(user_id)
         .bind(&input_player.name)
         .bind(u8::from(input_player.team))
@@ -319,29 +307,16 @@ where
     tx.commit().await?;
 
     // Create battle model
-    let schema = BattleEntity {
-        id: match_id,
-        server_id: server_auth.id,
-        uuid,
-        level_name: request.level_name,
-        status: BattleStatus::Ongoing,
-        replay_hash: None,
-        replay_filename: None,
-        margin_score: 0,
-        concluded_at: None,
-        inserted_at: now,
-        updated_at: now,
-        participants: Some(Vec::new()),
+    let battle = Battle {
+        participants: participants,
+        ..Battle::try_from(battle)?
     };
-
-    let mut battle = Battle::try_from(schema)?;
-    battle.participants = participants;
 
     // Commit analytics
     let db_clone = state.db.clone();
     let model_clone = model.clone();
     tokio::spawn(async move {
-        if let Err(err) = flush_analytics(match_id, &model_clone, db_clone).await {
+        if let Err(err) = flush_analytics(battle_id, &model_clone, db_clone).await {
             tracing::error!("got error flushing analytics: {}", err);
         }
     });

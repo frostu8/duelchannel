@@ -80,8 +80,9 @@ plt.xlabel("DR")
 plt.ylabel("Win/Loss Ratio")
 
 # Create the annotation object
-annotation = ax.annotate("", xy=(0,0), xytext=(20,20),textcoords="offset points",
-                         size="x-large",
+annotation = ax.annotate("", xy=(0,0), xytext=(-60,20),
+                         textcoords="offset points",
+                         size="large",
                          bbox={"boxstyle": "round", "fc": "w"},
                          arrowprops={"arrowstyle": "->"})
 annotation.set_visible(False)

@@ -139,12 +139,18 @@ pub async fn get_user_statistics(
     .map_err(Error::from)
 }
 
+/// Creates a new [`UserBuilder`].
+pub fn build_user(display_name: impl Into<String>) -> UserBuilder {
+    UserBuilder::new(display_name)
+}
+
 /// A builder for a user.
 #[derive(Debug)]
 pub struct UserBuilder {
     display_name: String,
     avatar_url: Option<String>,
     flags: UserFlags,
+    timestamp: DateTime<Utc>,
 }
 
 impl UserBuilder {
@@ -154,6 +160,7 @@ impl UserBuilder {
             display_name: display_name.into(),
             avatar_url: None,
             flags: UserFlags::empty(),
+            timestamp: Utc::now(),
         }
     }
 
@@ -170,15 +177,26 @@ impl UserBuilder {
         UserBuilder { flags, ..self }
     }
 
+    /// Stamps the user at a specific time, instead of at builder creation.
+    pub fn timestamp(self, timestamp: impl Into<DateTime<Utc>>) -> UserBuilder {
+        UserBuilder {
+            timestamp: timestamp.into(),
+            ..self
+        }
+    }
+
     /// Creates the user.
     pub async fn create(self, conn: &mut SqliteConnection) -> Result<UserEntity, Error> {
         // get new allocator
         let mut allocator = short_id::allocate();
 
-        let now = Utc::now();
-        let display_name = self.display_name;
-        let avatar_url = self.avatar_url;
-        let flags = self.flags;
+        let UserBuilder {
+            display_name,
+            avatar_url,
+            flags,
+            timestamp,
+            ..
+        } = self;
 
         allocator
             .insert(conn, |short_id, conn| {
@@ -200,7 +218,7 @@ impl UserBuilder {
                         RETURNING id, short_id, display_name, avatar_url, flags, ordinal, hide_rating, inserted_at, updated_at
                         "#,
                     )
-                    .bind(now)
+                    .bind(timestamp)
                     .bind(short_id)
                     .bind(&display_name)
                     .bind(i32::from(flags))

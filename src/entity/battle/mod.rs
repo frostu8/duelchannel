@@ -12,6 +12,7 @@ use duelchannel_model::{
     user::{User, UserFlags},
 };
 
+use rand::{RngExt as _, SeedableRng as _, rngs::StdRng};
 use sea_query::{
     Asterisk, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SqliteQueryBuilder,
 };
@@ -27,13 +28,16 @@ use crate::{
     },
     error::Error,
     mmr::RatingModel,
+    short_id::IdsExhausted,
 };
+
+const MAX_INSERT_ATTEMPTS: usize = 5;
 
 /// A schema for battles stored in database.
 #[derive(Clone, Debug, FromRow)]
 pub struct BattleEntity {
     pub id: i32,
-    pub server_id: i32,
+    pub server_id: Option<i32>,
     #[sqlx(try_from = "String")]
     pub uuid: Uuid,
     pub level_name: String,
@@ -93,6 +97,118 @@ impl TryFrom<BattleEntity> for Battle {
             margin_score: value.margin_score,
             replay_url: None,
             started_at: value.inserted_at,
+        })
+    }
+}
+
+/// Creates a new [`BattleBuilder`].
+pub fn build_battle(level_name: impl Into<String>) -> BattleBuilder {
+    BattleBuilder::new(level_name)
+}
+
+/// A battle builder.
+#[derive(Debug)]
+pub struct BattleBuilder {
+    server_id: Option<i32>,
+    timestamp: DateTime<Utc>,
+    level_name: String,
+    status: BattleStatus,
+}
+
+impl BattleBuilder {
+    /// Creates a new `BattleBuilder`.
+    pub fn new(level_name: impl Into<String>) -> BattleBuilder {
+        BattleBuilder {
+            server_id: None,
+            timestamp: Utc::now(),
+            level_name: level_name.into(),
+            status: BattleStatus::Ongoing,
+        }
+    }
+
+    /// Sets the server id of the battle it took place on.
+    pub fn server_id(self, server_id: i32) -> BattleBuilder {
+        BattleBuilder {
+            server_id: Some(server_id),
+            ..self
+        }
+    }
+
+    /// Sets the battle's status.
+    pub fn status(self, status: BattleStatus) -> BattleBuilder {
+        BattleBuilder { status, ..self }
+    }
+
+    /// Sets the battle's timestamp.
+    pub fn timestamp(self, timestamp: impl Into<DateTime<Utc>>) -> BattleBuilder {
+        BattleBuilder {
+            timestamp: timestamp.into(),
+            ..self
+        }
+    }
+
+    /// Creates the battle builder.
+    pub async fn create(self, conn: &mut SqliteConnection) -> Result<BattleEntity, Error> {
+        let BattleBuilder {
+            timestamp,
+            server_id,
+            level_name,
+            status,
+            ..
+        } = self;
+
+        let mut rng = StdRng::from_seed(rand::random());
+
+        let mut inserted_id = None::<(i32, Uuid)>;
+        for _ in 0..MAX_INSERT_ATTEMPTS {
+            let mut bytes = [0u8; 16];
+            rng.fill(&mut bytes);
+
+            let uuid = uuid::Builder::from_random_bytes(bytes).into_uuid();
+
+            // Create the battle
+            let res = sqlx::query(
+                r#"
+                INSERT INTO battle (inserted_at, updated_at, server_id, uuid, level_name, status)
+                VALUES ($1, $1, $2, $3, $4, $5)
+                "#,
+            )
+            .bind(timestamp)
+            .bind(server_id)
+            .bind(uuid.hyphenated().to_string())
+            .bind(&level_name)
+            .bind(u8::from(status))
+            .execute(&mut *conn)
+            .await;
+
+            match res {
+                Ok(res) => {
+                    inserted_id = Some((res.last_insert_rowid() as i32, uuid));
+                    break;
+                }
+                // regenerate ID
+                Err(sqlx::Error::Database(err)) if err.is_unique_violation() => (),
+                Err(err) => return Err(err.into()),
+            }
+        }
+
+        let Some((id, uuid)) = inserted_id else {
+            return Err(IdsExhausted.into());
+        };
+
+        Ok(BattleEntity {
+            id,
+            server_id,
+            uuid,
+            level_name,
+            status,
+            margin_score: 0,
+            replay_hash: None,
+            replay_filename: None,
+            concluded_at: None,
+            inserted_at: timestamp,
+            updated_at: timestamp,
+            participants: Some(Vec::new()),
         })
     }
 }
