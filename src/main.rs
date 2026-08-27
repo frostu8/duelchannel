@@ -1,4 +1,4 @@
-use std::{env, fmt::Debug, io, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{env, fmt::Debug, io, net::SocketAddr, path::PathBuf, str::FromStr as _, sync::Arc};
 
 use eyre::OptionExt as _;
 use http::{HeaderValue, Method, header};
@@ -31,7 +31,7 @@ use duelchannel::{
     routes,
 };
 
-use sqlx::{Sqlite, pool::PoolOptions};
+use sqlx::{Sqlite, pool::PoolOptions, sqlite::SqliteConnectOptions};
 
 use tokio::{main, select, signal};
 
@@ -125,7 +125,11 @@ where
         .ok_or_eyre("No `DATABASE_URL` set!")?;
 
     // Connect to sqlite database
-    let db = PoolOptions::<Sqlite>::new().connect(&database_url).await?;
+    let db_options = SqliteConnectOptions::from_str(&database_url)?
+        .busy_timeout(std::time::Duration::from_secs(2));
+    let db = PoolOptions::<Sqlite>::new()
+        .connect_with(db_options)
+        .await?;
 
     // Load object storage
     let object_storage = match &config.cdn.service {
