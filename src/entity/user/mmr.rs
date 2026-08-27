@@ -1,7 +1,6 @@
 //! Skill-based rating service.
 
 use std::cmp::min;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::{any::Any, future::ready};
 

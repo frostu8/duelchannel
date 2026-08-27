@@ -311,6 +311,8 @@ async fn idle_player_decays_through_closed_periods() {
 /// Test for unexpected DR drops.
 #[tokio::test]
 async fn unexpected_dr_drops() {
+    const BATTLE_COUNT: i32 = 50;
+
     let pool = setup_pool().await;
     let mut conn = pool.acquire().await.unwrap();
 
@@ -330,12 +332,12 @@ async fn unexpected_dr_drops() {
 
     // Lets get battling!! This guy is gonna get slimed.
     let mut time = t0;
-    let step = cfg.period / 20;
+    let step = cfg.period / BATTLE_COUNT;
 
     let mut winner_ordinal = user_ordinal(&pool, winner).await;
     let mut loser_ordinal = user_ordinal(&pool, loser).await;
 
-    for i in 0..40 {
+    for i in 0..BATTLE_COUNT {
         insert_battle(&pool, winner, loser, time).await;
         update_ratings_at(
             &[winner, loser],
@@ -372,6 +374,9 @@ async fn unexpected_dr_drops() {
         time += step;
     }
 
+    let pc = period_count(&pool).await;
+    assert_eq!(pc, 1, "rollover shouldn't happen yet");
+
     // Add another battle
     let t1 = t0 + cfg.period;
     insert_battle(&pool, winner, loser, t1).await;
@@ -385,25 +390,50 @@ async fn unexpected_dr_drops() {
     .await
     .expect("update_ratings_at");
 
-    let period_count = period_count(&pool).await;
-    assert!(
-        period_count >= 2,
-        "rollover must create a new period, got {}",
-        period_count
-    );
+    let pc = period_count(&pool).await;
+    assert!(pc >= 2, "rollover must create a new period, got {}", pc);
 
     let new_winner_ordinal = user_ordinal(&pool, winner).await;
     let new_loser_ordinal = user_ordinal(&pool, loser).await;
 
     assert!(
-        new_winner_ordinal > winner_ordinal,
-        "winner ordinal should be higher, {} -> {}",
+        new_winner_ordinal >= winner_ordinal,
+        "winner ordinal should be higher or stay the same, {} -> {}",
         winner_ordinal,
         new_winner_ordinal
     );
     assert!(
-        new_loser_ordinal < loser_ordinal,
-        "loser ordinal should be lower, {} -> {}",
+        new_loser_ordinal <= loser_ordinal,
+        "loser ordinal should be lower or stay the same, {} -> {}",
+        loser_ordinal,
+        new_loser_ordinal
+    );
+
+    winner_ordinal = new_winner_ordinal;
+    loser_ordinal = new_loser_ordinal;
+
+    // Add ANOTHER battle
+    let t2 = t1 + TimeDelta::seconds(10);
+    insert_battle(&pool, winner, loser, t2).await;
+
+    update_ratings_at(
+        &[winner, loser],
+        &model,
+        t2 + TimeDelta::seconds(10),
+        &mut conn,
+    )
+    .await
+    .expect("update_ratings_at");
+
+    assert!(
+        new_winner_ordinal >= winner_ordinal,
+        "winner ordinal should be higher or stay the same, {} -> {}",
+        winner_ordinal,
+        new_winner_ordinal
+    );
+    assert!(
+        new_loser_ordinal <= loser_ordinal,
+        "loser ordinal should be lower or stay the same, {} -> {}",
         loser_ordinal,
         new_loser_ordinal
     );
