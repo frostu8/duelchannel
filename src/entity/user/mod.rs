@@ -131,7 +131,7 @@ pub async fn get_user_statistics(
         LEFT JOIN battle b ON p.match_id = b.id
         WHERE
             u.id = $1
-            AND b.status = 1
+            AND (b.status IS NULL OR b.status = 1)
         GROUP BY u.id
         "#,
     )
