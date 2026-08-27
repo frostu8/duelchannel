@@ -12,7 +12,7 @@ region = "us-east-2"
 
 [mmr]
 model = "glicko2"
-period = "30s"
+period = "24h"
 
 [http]
 port = 4000
