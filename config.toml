@@ -17,6 +17,5 @@ period = "24h"
 [http]
 port = 4000
 
-[[awards]]
+[awards.beta_challenger]
 threshold = 16000
-awards = ["BETA_CHALLENGER"]

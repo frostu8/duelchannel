@@ -1,12 +1,13 @@
 //! Application configuration.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use chrono::TimeDelta;
 
+use derive_more::Display;
 use duelchannel_model::user::UserFlags;
 use figment::{
     Figment,
@@ -27,8 +28,8 @@ use crate::mmr::{glicko2::Glicko2Config, openskill::OpenSkillConfig};
 pub struct Config {
     /// General server configuration.
     pub server: ServerConfig,
-    /// Medal awards.
-    pub awards: Vec<AwardConfig>,
+    /// Medal awards, keyed by award name.
+    pub awards: HashMap<String, AwardConfig>,
     /// Mmr config.
     pub mmr: RatingModelConfig,
     /// Object storage configuration.
@@ -77,9 +78,11 @@ pub struct AwardConfig {
     pub threshold: i32,
     /// If the award can be given while the user is in provisional ratings.
     pub award_provisional: bool,
-    /// The awards to give out.
-    #[serde(deserialize_with = "deserialize_awards_list")]
-    pub awards: UserFlags,
+    /// The award to give out.
+    ///
+    /// Resolved dynamically at config load.
+    #[serde(skip)]
+    pub flag: UserFlags,
 }
 
 impl Default for AwardConfig {
@@ -87,7 +90,7 @@ impl Default for AwardConfig {
         AwardConfig {
             threshold: 0,
             award_provisional: false,
-            awards: UserFlags::empty(),
+            flag: UserFlags::empty(),
         }
     }
 }
@@ -192,7 +195,7 @@ pub struct DiscordConfig {
 
 /// Reads the configuration.
 pub fn read_config(config_file: impl AsRef<Path>) -> Result<Config, Error> {
-    Figment::from(Serialized::defaults(Config::default()))
+    let mut config: Config = Figment::from(Serialized::defaults(Config::default()))
         .merge(Toml::file(config_file))
         .merge(Env::prefixed("DUELCHANNEL_"))
         .merge(Env::raw().filter_map(|k| match k.as_str() {
@@ -206,7 +209,14 @@ pub fn read_config(config_file: impl AsRef<Path>) -> Result<Config, Error> {
             _ => None,
         }))
         .extract()
-        .map_err(From::from)
+        .map_err(Error::from)?;
+
+    // Resolve award names
+    for (name, award) in &mut config.awards {
+        award.flag = award_from_name(name).map_err(Error::from)?;
+    }
+
+    Ok(config)
 }
 
 pub fn deserialize_duration<'de, D>(deserializer: D) -> Result<TimeDelta, D::Error>
@@ -228,18 +238,17 @@ where
         .serialize(serializer)
 }
 
-fn deserialize_awards_list<'de, D>(deserializer: D) -> Result<UserFlags, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let awards = Vec::<String>::deserialize(deserializer)?;
-    let awards = awards
-        .iter()
-        .map(|s| s.trim().parse::<UserFlags>())
-        .collect::<Result<Vec<_>, <UserFlags as FromStr>::Err>>()
-        .map_err(|err| D::Error::custom(err))?;
+/// An award name in the configuration was not recognized.
+#[derive(Debug, Display)]
+#[display("unknown award: {_0}")]
+pub struct InvalidAward(pub String);
 
-    Ok(awards
-        .into_iter()
-        .fold(UserFlags::empty(), |acc, x| acc | x))
+impl std::error::Error for InvalidAward {}
+
+fn award_from_name(name: &str) -> Result<UserFlags, InvalidAward> {
+    match name {
+        "beta_challenger" => Ok(UserFlags::BETA_CHALLENGER),
+        "beta_tester" => Ok(UserFlags::BETA_TESTER),
+        name => Err(InvalidAward(name.to_string())),
+    }
 }

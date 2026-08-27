@@ -343,13 +343,13 @@ where
         let mut flags = player.flags;
         let awards = config
             .awards
-            .iter()
+            .values()
             .filter(|award| award.threshold <= rating.ordinal() as i32)
             .filter(|award| !rating.is_provisional() || award.award_provisional);
 
         // Award these guys
         for award in awards {
-            flags |= award.awards;
+            flags |= award.flag;
         }
 
         // Only update if the player's flags actually changed

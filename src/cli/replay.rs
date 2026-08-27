@@ -461,10 +461,10 @@ where
         let historical_challenger = user.flags.contains(UserFlags::BETA_CHALLENGER);
         let potential_challenger = config
             .awards
-            .iter()
+            .values()
             .filter(|award| award.threshold <= user.rating.ordinal() as i32)
             .filter(|award| !user.rating.is_provisional() || award.award_provisional)
-            .any(|award| award.awards.contains(UserFlags::BETA_CHALLENGER));
+            .any(|award| award.flag.contains(UserFlags::BETA_CHALLENGER));
 
         let data = format!(
             "{},{},{},{},{},{},{},{},{},{},{}\n",
