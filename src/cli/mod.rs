@@ -4,6 +4,7 @@ pub mod replay;
 
 use std::{
     cmp::min,
+    collections::HashSet,
     path::PathBuf,
     sync::{
         Arc,
@@ -122,6 +123,9 @@ pub struct MmrReset;
 /// Replays the MMR of the server.
 #[derive(clap::Args, Clone, Debug)]
 pub struct MmrReplay {
+    /// Only replay for given users.
+    #[arg(short, long)]
+    pub include: Option<Vec<String>>,
     /// Prints the header.
     #[arg(long, default_value_t = true, overrides_with = "no_header")]
     pub header: bool,
@@ -133,7 +137,9 @@ pub struct MmrReplay {
 impl From<MmrReplay> for ReplayOptions {
     fn from(value: MmrReplay) -> Self {
         ReplayOptions {
+            players: value.include.map(HashSet::from_iter),
             print_header: if value.no_header { false } else { value.header },
+            replay_to: None,
         }
     }
 }

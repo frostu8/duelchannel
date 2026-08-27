@@ -24,25 +24,34 @@ def to_bool(input: Any):
 @dataclass
 class User:
     id: int
+    short_id: str
     name: str
     games: int
     wlr: float
     rating: float
     deviation: float
     ordinal: float
-    st: str | None
-    challenger: bool
+    st: str
+    medal: bool
+    new_medal: bool
 
     @classmethod
     def from_dict(cls, src: Mapping[str, Any]) -> Self:
         d = dict(src)
-        # remove empty provisional field
-        if d["st"] == "":
-            del d["st"]
 
-        d["challenger"] = to_bool(d["challenger"])
+        d["medal"] = to_bool(d["medal"])
+        d["new_medal"] = to_bool(d["new_medal"])
 
         return dacite.from_dict(cls, d, dacite.Config(type_hooks={int: int, float: float}))
+
+    @property
+    def color(self) -> str:
+        if self.medal:
+            return "gold"
+        elif self.new_medal:
+            return "orange"
+        else:
+            return "blue"
 
 # Open the stdio and parse csv
 reader = csv.DictReader(sys.stdin, escapechar='\\')
@@ -58,7 +67,7 @@ for row in reader:
     users.append(user)
 
 # Plot data
-colors = ["gold" if u.challenger else "blue" for u in users]
+colors = [u.color for u in users]
 
 fig,ax = plt.subplots(dpi=192)
 plot = plt.scatter(x=[u.ordinal for u in users],

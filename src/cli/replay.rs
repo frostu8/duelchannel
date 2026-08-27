@@ -1,5 +1,6 @@
 //! Replay MMR calculations for tuning.
 
+use std::cmp::min;
 use std::collections::{HashMap, HashSet};
 use std::pin::pin;
 
@@ -7,7 +8,7 @@ use chrono::{DateTime, Utc};
 use duelchannel_model::user::UserFlags;
 use tokio::io::AsyncWriteExt;
 
-use crate::mmr::{Rating, RatingModel};
+use crate::mmr::{Matchup, Rating, RatingModel};
 
 use duelchannel_model::battle::BattleStatus;
 
@@ -16,13 +17,23 @@ use sqlx::{FromRow, SqlitePool};
 /// Options for running an MMR replay.
 #[derive(Debug, Clone)]
 pub struct ReplayOptions {
+    /// Only replay for these players (by short id).
+    pub players: Option<HashSet<String>>,
     /// Whether or not to print the header.
     pub print_header: bool,
+    /// Replay up to a certain date-time.
+    ///
+    /// If `None`, this will replay up to the last battle.
+    pub replay_to: Option<DateTime<Utc>>,
 }
 
 impl Default for ReplayOptions {
     fn default() -> Self {
-        ReplayOptions { print_header: true }
+        ReplayOptions {
+            players: None,
+            print_header: true,
+            replay_to: None,
+        }
     }
 }
 
@@ -59,15 +70,9 @@ impl RatingPeriod {
 }
 
 #[derive(Debug, Clone)]
-struct Matchup<T> {
-    matchup: crate::mmr::Matchup<T>,
-    concluded_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone)]
 struct UserHistory<T> {
-    #[allow(dead_code)]
     id: i32,
+    short_id: String,
     display_name: Option<String>,
     flags: UserFlags,
     rating: Rating<T>,
@@ -82,6 +87,7 @@ impl<T> UserHistory<T> {
             id: rating.user_id,
             rating,
             // other fields
+            short_id: String::new(),
             display_name: None,
             flags: UserFlags::empty(),
             last_update: None,
@@ -122,6 +128,9 @@ where
     let mut duels = HashMap::<i32, Duel>::new();
 
     let mut user_history = HashMap::<i32, UserHistory<T::Data>>::new();
+    let mut user_order = Vec::<i32>::new();
+
+    let mut include_players = HashSet::<i32>::new();
 
     // First, list ALL battles played on the local database, sorted by
     // conclusion order.
@@ -145,6 +154,53 @@ where
     )
     .fetch_all(db)
     .await?;
+
+    assert!(duel_results.len() > 0, "need at least one duel to replay");
+
+    let replay_to = options
+        .replay_to
+        .or_else(|| {
+            duel_results
+                .iter()
+                .map(|duel_result| duel_result.concluded_at)
+                .max()
+        })
+        .unwrap();
+
+    // Get player info
+    let db_users = sqlx::query_as::<_, (i32, String, Option<String>, i32)>(
+        "SELECT id, short_id, display_name, flags FROM user",
+    )
+    .fetch_all(db)
+    .await?;
+
+    for (user_id, short_id, display_name, flags) in db_users {
+        let uh = match user_history.get_mut(&user_id) {
+            Some(uh) => uh,
+            None => {
+                // Initialize rating
+                let rating = model.create_rating(user_id).await?;
+                user_history.insert(user_id, UserHistory::new(rating));
+                user_history.get_mut(&user_id).unwrap()
+            }
+        };
+
+        uh.short_id = short_id.clone();
+        uh.display_name = display_name;
+        uh.flags = UserFlags::try_from(flags)?;
+
+        // Check if we need to include this player
+        if let Some(players) = options.players.as_ref() {
+            if players.contains(&short_id) {
+                include_players.insert(user_id);
+            }
+        } else {
+            // Always include player
+            include_players.insert(user_id);
+        }
+
+        user_order.push(user_id);
+    }
 
     let mut rating_periods = Vec::<RatingPeriod>::new();
     for duel_result in duel_results {
@@ -179,7 +235,10 @@ where
         duel.results.push(duel_result);
     }
 
-    for (i, rating_period) in rating_periods.iter().enumerate() {
+    for rating_period in rating_periods.iter() {
+        let ended_at = rating_period.started_at + model.period();
+        let updating_at = min(ended_at, replay_to);
+
         let mut historical_ratings = user_history
             .values()
             .map(|uh| (uh.id, uh.rating.clone()))
@@ -190,8 +249,6 @@ where
         for id in rating_period.duels.iter() {
             // Get duel from duels
             let duel = &duels[&id];
-            let concluded_at = duel.concluded_at;
-
             let (p1, p2) = (&duel.results[0], &duel.results[1]);
 
             // Find the winner and loser
@@ -215,14 +272,11 @@ where
 
                 let matchups = matchups.entry(me.user_id).or_default();
                 matchups.push(Matchup {
-                    concluded_at,
-                    matchup: crate::mmr::Matchup {
-                        opponent: opp_rating,
-                        status: BattleStatus::Concluded,
-                        position: my_pos,
-                        finish_time: me.finish_time.unwrap_or_default(),
-                        no_contest: me.no_contest,
-                    },
+                    opponent: opp_rating,
+                    status: BattleStatus::Concluded,
+                    position: my_pos,
+                    finish_time: me.finish_time.unwrap_or_default(),
+                    no_contest: me.no_contest,
                 });
             }
         }
@@ -234,17 +288,6 @@ where
                 .rev()
                 .find(|period| period.players.contains(&user_id))
                 .map(|period| period.started_at);
-
-            let updating_at = if i + 1 < rating_periods.len() {
-                // This is not the last rating period, just use the period's
-                // ended at.
-                rating_period.started_at + model.period()
-            } else {
-                match matchups.iter().map(|mu| mu.concluded_at).max() {
-                    Some(time) => time,
-                    None => continue,
-                }
-            };
 
             let me_rating = match historical_ratings.get(&user_id) {
                 Some(r) => r.clone(),
@@ -267,13 +310,8 @@ where
                 // player's first duel
                 .unwrap_or(0.0);
 
-            let rate_matchups = matchups
-                .iter()
-                .cloned()
-                .map(|mu| mu.matchup)
-                .collect::<Vec<_>>();
             let new_rating = model
-                .rate(&me_rating, rate_matchups.as_slice(), fractional_period)
+                .rate(&me_rating, matchups.as_slice(), fractional_period)
                 .await?;
 
             let user = user_history
@@ -285,27 +323,59 @@ where
 
             user.wins += matchups
                 .iter()
-                .filter_map(|mu| bool::then_some(mu.matchup.position == 1, 1))
+                .filter_map(|mu| bool::then_some(mu.position == 1, 1))
                 .sum::<usize>();
             user.losses += matchups
                 .iter()
-                .filter_map(|mu| bool::then_some(mu.matchup.position != 1, 1))
+                .filter_map(|mu| bool::then_some(mu.position != 1, 1))
                 .sum::<usize>();
         }
     }
 
-    // Get player display name
-    let users =
-        sqlx::query_as::<_, (i32, Option<String>, i32)>("SELECT id, display_name, flags FROM user")
-            .fetch_all(db)
-            .await?;
-    for (id, display_name, flags) in users {
-        let Some(uh) = user_history.get_mut(&id) else {
+    // Pad extra rating periods
+    let mut started_at = rating_periods
+        .iter()
+        .last()
+        .map(|rp| rp.started_at)
+        .expect("at least one rating period");
+    while started_at < replay_to {
+        // Add rating period for posterity
+        started_at += model.period();
+        rating_periods.push(RatingPeriod::new(started_at));
+    }
+
+    // Do decay fo all users
+    // Skip users that have been excluded since we don't need them for matchups
+    for uh in user_history.values_mut() {
+        if !include_players.contains(&uh.id) {
+            continue;
+        }
+
+        // Find first period player did play in and add 1
+        let last_update_idx = rating_periods
+            .iter()
+            .rposition(|period| period.players.contains(&uh.id))
+            .map(|i| i + 1);
+        let Some(last_update_idx) = last_update_idx else {
+            // Player didn't do anything.
             continue;
         };
 
-        uh.display_name = display_name;
-        uh.flags = UserFlags::try_from(flags)?;
+        let last_update = rating_periods[last_update_idx].started_at;
+
+        for rating_period in rating_periods.iter().skip(last_update_idx) {
+            let ended_at = rating_period.started_at + model.period();
+            let ended_at = min(ended_at, replay_to);
+
+            let fractional_period = (((ended_at - last_update).as_seconds_f32()
+                / model.period().as_seconds_f32())
+                - model.decay_grace())
+            .clamp(0.0, 1.0);
+
+            // Pass X rating periods.
+            let new_rating = model.rate(&uh.rating, &[], fractional_period).await?;
+            uh.rating = new_rating;
+        }
     }
 
     if options.print_header {
@@ -319,7 +389,8 @@ where
     }
 
     // Drop newlines and begin to print CSV, starting with the header
-    let header = format!("id,name,games,wlr,rating,deviation,ordinal,st,challenger\n");
+    let header =
+        format!("id,short_id,name,games,wlr,rating,deviation,ordinal,st,medal,new_medal\n");
     output.write_all(header.as_bytes()).await?;
 
     // Print user data
@@ -329,21 +400,33 @@ where
     });
 
     for id in uids {
+        if !include_players.contains(&id) {
+            continue;
+        }
+
         let user = &user_history[&id];
 
         let provisional = if user.rating.is_provisional() {
             "PROV"
         } else {
-            ""
+            "VISIBLE"
         };
-        let challenger = if user.flags.contains(UserFlags::BETA_CHALLENGER) {
+
+        let historical_challenger = if user.flags.contains(UserFlags::BETA_CHALLENGER) {
             "YES"
         } else {
             "NO"
         };
+        let potential_challenger = if user.rating.ordinal() > 18000.0 {
+            "YES"
+        } else {
+            "NO"
+        };
+
         let data = format!(
-            "{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{}\n",
             id,
+            user.short_id,
             user.display_name
                 .as_ref()
                 .map_or("<empty>", |v| v)
@@ -354,7 +437,8 @@ where
             user.rating.deviation,
             user.rating.ordinal(),
             provisional,
-            challenger,
+            historical_challenger,
+            potential_challenger,
         );
         output.write_all(data.as_bytes()).await?;
     }
