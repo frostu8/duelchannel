@@ -38,7 +38,7 @@ WHERE
     AND NOT op.user_id = $1
     -- Only get matches between the bounds (inclusive)
     AND b.concluded_at >= $2
-    AND b.concluded_at <= $3
+    AND b.concluded_at < $3
 -- Group by battles to count how many we are ahead
 GROUP BY b.id, b.status, b.inserted_at, me.finish_time, me.no_contest, rp.inserted_at
 -- we only want matches where two players participated

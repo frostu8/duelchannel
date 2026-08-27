@@ -609,6 +609,7 @@ where
             .execute(&mut *conn)
             .await?;
 
+            println!("new rating: {}", new_rating.ordinal());
             rating.rating = new_rating.rating;
             rating.deviation = new_rating.deviation;
             rating.extra = new_rating.extra;

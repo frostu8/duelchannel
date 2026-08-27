@@ -311,7 +311,7 @@ async fn idle_player_decays_through_closed_periods() {
 /// Test for unexpected DR drops.
 #[tokio::test]
 async fn unexpected_dr_drops() {
-    const BATTLE_COUNT: i32 = 50;
+    const BATTLE_COUNT: i32 = 10;
 
     let pool = setup_pool().await;
     let mut conn = pool.acquire().await.unwrap();
@@ -397,14 +397,14 @@ async fn unexpected_dr_drops() {
     let new_loser_ordinal = user_ordinal(&pool, loser).await;
 
     assert!(
-        new_winner_ordinal >= winner_ordinal,
-        "winner ordinal should be higher or stay the same, {} -> {}",
+        new_winner_ordinal > winner_ordinal,
+        "winner ordinal should be higher, {} -> {}",
         winner_ordinal,
         new_winner_ordinal
     );
     assert!(
-        new_loser_ordinal <= loser_ordinal,
-        "loser ordinal should be lower or stay the same, {} -> {}",
+        new_loser_ordinal < loser_ordinal,
+        "loser ordinal should be lower, {} -> {}",
         loser_ordinal,
         new_loser_ordinal
     );
@@ -413,7 +413,7 @@ async fn unexpected_dr_drops() {
     loser_ordinal = new_loser_ordinal;
 
     // Add ANOTHER battle
-    let t2 = t1 + TimeDelta::seconds(10);
+    let t2 = t1 + TimeDelta::seconds(20);
     insert_battle(&pool, winner, loser, t2).await;
 
     update_ratings_at(
@@ -425,15 +425,18 @@ async fn unexpected_dr_drops() {
     .await
     .expect("update_ratings_at");
 
+    let new_winner_ordinal = user_ordinal(&pool, winner).await;
+    let new_loser_ordinal = user_ordinal(&pool, loser).await;
+
     assert!(
-        new_winner_ordinal >= winner_ordinal,
-        "winner ordinal should be higher or stay the same, {} -> {}",
+        new_winner_ordinal > winner_ordinal,
+        "winner ordinal should be higher, {} -> {}",
         winner_ordinal,
         new_winner_ordinal
     );
     assert!(
-        new_loser_ordinal <= loser_ordinal,
-        "loser ordinal should be lower or stay the same, {} -> {}",
+        new_loser_ordinal < loser_ordinal,
+        "loser ordinal should be lower, {} -> {}",
         loser_ordinal,
         new_loser_ordinal
     );
