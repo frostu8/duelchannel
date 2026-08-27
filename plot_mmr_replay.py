@@ -31,13 +31,18 @@ class User:
     rating: float
     deviation: float
     ordinal: float
-    st: str
+    provisional: bool
     medal: bool
     new_medal: bool
 
     @classmethod
     def from_dict(cls, src: Mapping[str, Any]) -> Self:
         d = dict(src)
+
+        if d["provisional"] == "PROV":
+            d["provisional"] = True
+        elif d["provisional"] == "VISIBLE":
+            d["provisional"] = False
 
         d["medal"] = to_bool(d["medal"])
         d["new_medal"] = to_bool(d["new_medal"])
@@ -61,7 +66,7 @@ for row in reader:
     user = User.from_dict(row)
 
     # Skip players with too few games on record
-    if user.st == "PROV":
+    if user.provisional:
         continue
 
     users.append(user)

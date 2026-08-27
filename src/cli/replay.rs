@@ -434,8 +434,9 @@ where
     }
 
     // Drop newlines and begin to print CSV, starting with the header
-    let header =
-        format!("id,short_id,name,games,wlr,rating,deviation,ordinal,st,medal,new_medal\n");
+    let header = format!(
+        "id,short_id,name,games,wlr,rating,deviation,ordinal,provisional,medal,new_medal\n"
+    );
     output.write_all(header.as_bytes()).await?;
 
     // Print user data
