@@ -8,8 +8,6 @@ use duelchannel_model::{
     request::battle::UpdatePlayerPlacementRequest,
 };
 
-use sqlx::FromRow;
-
 use tracing::instrument;
 
 use uuid::Uuid;
@@ -48,17 +46,10 @@ pub async fn update(
     State(state): State<AppState>,
     Payload(request): Payload<UpdatePlayerPlacementRequest>,
 ) -> Result<Json<Participant>, Error> {
-    #[derive(FromRow)]
-    struct BattleRow {
-        id: i32,
-        #[sqlx(try_from = "u8")]
-        status: BattleStatus,
-    }
-
     let mut tx = state.db.begin().await?;
 
     // find match first
-    let battle = sqlx::query_as::<_, BattleRow>(
+    let row = sqlx::query_as::<_, (i32, u8)>(
         r#"
         SELECT id, status
         FROM battle
@@ -67,19 +58,24 @@ pub async fn update(
     )
     .bind(uuid.hyphenated().to_string())
     .fetch_optional(&mut *tx)
-    .await?;
+    .await
+    .map_err(Error::from)
+    .and_then(|row| {
+        row.map(|(id, status)| Ok((id, BattleStatus::try_from(status).map_err(Error::new)?)))
+            .transpose()
+    })?;
 
-    let Some(battle) = battle else {
+    let Some((battle_id, status)) = row else {
         return Err(Error::not_found(format!("Match {} not found", uuid)));
     };
 
     // if the battle is closed, it cannot be updated anymore
-    if battle.status != BattleStatus::Ongoing {
+    if status != BattleStatus::Ongoing {
         return Err(ErrorKind::AlreadyConcluded(uuid).into());
     }
 
     // find the battle participant
-    let participant = get_participant_by_short_id(battle.id, &short_id, &mut *tx).await?;
+    let participant = get_participant_by_short_id(battle_id, &short_id, &mut *tx).await?;
     let Some(mut participant) = participant else {
         // The player with that RRID does not exist.
         return Err(Error::not_found(format!(
@@ -91,6 +87,10 @@ pub async fn update(
     if let Some(finish_time) = request.finish_time {
         participant.finish_time = Some(finish_time);
     }
+    if let Some(roulette) = request.roulette {
+        // Append roulette
+        participant.extend_roulette(roulette, &mut *tx).await?;
+    }
 
     // UPDATE THAT SHIT KAKAROT!
     let res = sqlx::query(
@@ -101,7 +101,7 @@ pub async fn update(
         "#,
     )
     .bind(participant.id)
-    .bind(battle.id)
+    .bind(battle_id)
     .bind(request.finish_time)
     .execute(&mut *tx)
     .await?;

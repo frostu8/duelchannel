@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::{
-    battle::{BattleStatus, PlayerTeam},
+    battle::{BattleStatus, ItemUsage, PlayerTeam},
     profile::{Rrid, Skin},
 };
 
@@ -45,6 +45,9 @@ pub struct UpdatePlayerPlacementRequest {
     /// The finishing time of the player.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish_time: Option<i32>,
+    /// Player roulette; append only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roulette: Option<Vec<ItemUsage>>,
 }
 
 /// Request to update a match.

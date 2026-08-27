@@ -295,6 +295,7 @@ where
         // insert players to vec
         participants.push(Participant {
             user: User::try_from(profile_user)?,
+            roulette: Vec::new(),
             name: input_player.name,
             team: input_player.team,
             finish_time: None,

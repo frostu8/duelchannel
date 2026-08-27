@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use chrono::{DateTime, Utc};
 
 use duelchannel_model::{
-    battle::{Battle, BattleStatus, Participant, PlayerTeam},
+    battle::{Battle, BattleStatus, ItemUsage, KartItem, Participant, PlayerTeam},
     profile::Skin,
     user::User,
 };
@@ -66,8 +66,10 @@ impl BattleEntity {
             .map_err(Error::from)?;
 
         for p in participants.iter_mut() {
+            p.preload_roulette(&mut *conn).await?;
+
             if let Some(user) = p.user.as_mut() {
-                user.preload_statistics(conn).await?;
+                user.preload_statistics(&mut *conn).await?;
             }
         }
 
@@ -254,9 +256,65 @@ pub struct ParticipantEntity {
 
     #[sqlx(skip)]
     pub user: Option<UserEntity>,
+    #[sqlx(skip)]
+    pub roulette: Option<Vec<RouletteEntity>>,
     // from skin table (on good join)
     #[sqlx(flatten)]
     pub skin: MaybeSkinEntity,
+}
+
+impl ParticipantEntity {
+    /// Adds some lines to a participant's roulette stats.
+    pub async fn extend_roulette<I>(
+        &mut self,
+        extend: I,
+        conn: &mut SqliteConnection,
+    ) -> Result<&[RouletteEntity], Error>
+    where
+        I: IntoIterator<Item = ItemUsage>,
+    {
+        for item in extend {
+            let ItemUsage { item, stack, count } = item;
+
+            sqlx::query(
+                r#"
+                INSERT INTO roulette (participant_id, item, multiplicity, count)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (item, multiplicity)
+                DO UPDATE SET count = count + $4
+                "#,
+            )
+            .bind(self.id)
+            .bind(item.name())
+            .bind(stack as i32)
+            .bind(count as i32)
+            .execute(&mut *conn)
+            .await?;
+        }
+
+        // Refetch roulette stats, using the database to serialize it all
+        self.preload_roulette(conn).await
+    }
+
+    /// Loads the participant's roulette stats.
+    pub async fn preload_roulette(
+        &mut self,
+        conn: &mut SqliteConnection,
+    ) -> Result<&[RouletteEntity], Error> {
+        let roulette = sqlx::query_as::<_, RouletteEntity>(
+            r#"
+            SELECT *
+            FROM roulette
+            WHERE participant_id = $1
+            "#,
+        )
+        .bind(self.id)
+        .fetch_all(conn)
+        .await?;
+
+        self.roulette = Some(roulette);
+        Ok(self.roulette.as_ref().unwrap().as_slice())
+    }
 }
 
 impl TryFrom<ParticipantEntity> for Participant {
@@ -270,6 +328,12 @@ impl TryFrom<ParticipantEntity> for Participant {
                     field_name: String::from("user"),
                 })
                 .and_then(User::try_from)?,
+            roulette: value
+                .roulette
+                .ok_or_else(|| MissingData {
+                    field_name: String::from("roulette"),
+                })
+                .map(|v| v.into_iter().map(ItemUsage::from).collect())?,
             name: value.name,
             team: value.team,
             finish_time: value.finish_time,
@@ -277,6 +341,27 @@ impl TryFrom<ParticipantEntity> for Participant {
             skin: value.skin.into(),
             skin_color: value.skin_color,
         })
+    }
+}
+
+/// A row in the roulette table.
+#[derive(Clone, Debug, FromRow)]
+pub struct RouletteEntity {
+    pub id: i32,
+    pub participant_id: i32,
+    #[sqlx(try_from = "String")]
+    pub item: KartItem,
+    pub multiplicity: i32,
+    pub count: i32,
+}
+
+impl From<RouletteEntity> for ItemUsage {
+    fn from(value: RouletteEntity) -> Self {
+        ItemUsage {
+            item: value.item,
+            stack: value.multiplicity as usize,
+            count: value.count as usize,
+        }
     }
 }
 
