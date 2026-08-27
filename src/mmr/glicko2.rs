@@ -68,8 +68,21 @@ impl RatingModel for Glicko2 {
         Ok(rate(&self.config, rating, &matchups, period_elapsed))
     }
 
-    async fn quality(&self, _players: &[Rating<Self::Data>]) -> Result<f32, Error> {
-        todo!()
+    async fn quality(&self, players: &[Rating<Self::Data>]) -> Result<f32, Error> {
+        assert!(players.len() == 2);
+        let a = &players[0];
+        let b = &players[1];
+
+        let (mu_a, phi_a) = to_glicko2(a);
+        let (mu_b, phi_b) = to_glicko2(b);
+
+        // Probability A beats B
+        let p_ab = e_func(mu_a, mu_b, g_func(phi_b));
+        // Probability B beats A
+        let p_ba = e_func(mu_b, mu_a, g_func(phi_a));
+
+        let quality = 4.0 * (p_ab * (1.0 - p_ab) * p_ba * (1.0 - p_ba)).sqrt();
+        Ok(quality)
     }
 
     fn period(&self) -> TimeDelta {
@@ -514,5 +527,32 @@ mod tests {
 
         let off = soft_floor_phi(to_phi(50.0), to_phi(200.0), 0.0);
         assert!((off * 173.7178 - 50.0).abs() < 1e-3);
+    }
+
+    #[tokio::test]
+    async fn test_quality() {
+        let model = Glicko2::new(Glicko2Config::default());
+
+        let p1 = model.create_rating(1).await.unwrap();
+        let p2 = model.create_rating(2).await.unwrap();
+        let even = model.quality(&[p1, p2]).await.unwrap();
+        assert!(
+            (even - 1.0).abs() < 1e-3,
+            "even match should be ~1.0, got {even}"
+        );
+
+        // mismatched ratings should drop quality sharply
+        let mut p3 = model.create_rating(3).await.unwrap();
+        p3.rating = 1900.0;
+        p3.deviation = 60.0;
+
+        let mut p4 = model.create_rating(4).await.unwrap();
+        p4.deviation = 60.0;
+
+        let mismatch = model.quality(&[p3, p4]).await.unwrap();
+        assert!(
+            mismatch < 0.5,
+            "mismatch should fall below 0.5, got {mismatch}"
+        );
     }
 }

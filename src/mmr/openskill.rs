@@ -436,7 +436,6 @@ impl Default for InitialRating {
 mod tests {
     use super::*;
 
-    use chrono::Utc;
     use duelchannel_model::battle::BattleStatus;
 
     fn make_record(user_id: i32, rating: f32, deviation: f32) -> OpenSkillRating {
