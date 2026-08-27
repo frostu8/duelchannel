@@ -90,6 +90,9 @@ pub async fn update(
     if let Some(roulette) = request.roulette {
         // Append roulette
         participant.extend_roulette(roulette, &mut *tx).await?;
+    } else {
+        // Remember to preload the roulette
+        participant.preload_roulette(&mut *tx).await?;
     }
 
     // UPDATE THAT SHIT KAKAROT!
