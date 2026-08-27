@@ -1,5 +1,6 @@
 //! OpenAPI documentation generation.
 
+use duelchannel_model::battle::{ItemUsage, KartItem};
 use utoipa::OpenApi;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 
@@ -55,6 +56,8 @@ use crate::routes;
         PlayerTeam,
         Skin,
         User,
+        KartItem,
+        ItemUsage,
         CurrentUser,
         Profile,
         Server,

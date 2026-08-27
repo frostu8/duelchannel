@@ -45,7 +45,10 @@ pub struct UpdatePlayerPlacementRequest {
     /// The finishing time of the player.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish_time: Option<i32>,
-    /// Player roulette; append only.
+    /// Player roulette statistics.
+    ///
+    /// Statistics that share a stack and item will increment in-place instead
+    /// of appending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roulette: Option<Vec<ItemUsage>>,
 }
