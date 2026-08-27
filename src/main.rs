@@ -220,7 +220,7 @@ where
                 let options = ReplayOptions::from(mmr_replay.clone());
 
                 let stdout = tokio::io::stdout();
-                let res = replay(model, stdout, &db, options).await;
+                let res = replay(model, stdout, &db, &config, options).await;
 
                 if let Err(err) = res {
                     // skip broken pipe errors

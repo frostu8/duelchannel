@@ -463,7 +463,9 @@ where
     if request.status == Some(BattleStatus::Concluded)
         || request.status == Some(BattleStatus::Cancelled)
     {
-        model.update_ratings(battle.id, &mut *tx).await?;
+        model
+            .update_ratings(battle.id, &state.config, &mut *tx)
+            .await?;
     }
 
     // Create battle response

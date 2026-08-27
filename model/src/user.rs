@@ -1,6 +1,8 @@
 //! User representations.
 
-use derive_more::{Deref, DerefMut};
+use std::str::FromStr;
+
+use derive_more::{Deref, DerefMut, Display};
 
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +73,19 @@ bitflags::bitflags! {
     }
 }
 
+impl FromStr for UserFlags {
+    type Err = UnknownFlag;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ADMINISTRATOR" => Ok(UserFlags::ADMINISTRATOR),
+            "BETA_TESTER" => Ok(UserFlags::BETA_TESTER),
+            "BETA_CHALLENGER" => Ok(UserFlags::BETA_CHALLENGER),
+            _ => Err(UnknownFlag(s.to_string())),
+        }
+    }
+}
+
 impl From<i32> for UserFlags {
     fn from(value: i32) -> Self {
         let value: u32 = cast(value);
@@ -83,3 +98,8 @@ impl From<UserFlags> for i32 {
         cast(value.bits())
     }
 }
+
+/// An error for unknown flags.
+#[derive(Debug, Display)]
+#[display("unknown flag: \"{_0}\"")]
+pub struct UnknownFlag(String);

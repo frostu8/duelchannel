@@ -18,6 +18,7 @@ use sqlx::{FromRow, Row as _, SqliteConnection, sqlite::SqliteRow};
 
 use tracing::instrument;
 
+use crate::config::Config;
 use crate::{
     entity::battle::update_participant_ratings,
     error::Error,
@@ -53,6 +54,7 @@ pub trait RatingService: Send + Sync {
     fn update_ratings(
         &self,
         battle_id: i32,
+        config: &Config,
         conn: &mut SqliteConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send;
 
@@ -105,9 +107,10 @@ where
     async fn update_ratings(
         &self,
         battle_id: i32,
+        config: &Config,
         conn: &mut SqliteConnection,
     ) -> Result<(), Error> {
-        update_participant_ratings(battle_id, self, conn).await
+        update_participant_ratings(battle_id, self, config, conn).await
     }
 
     async fn quality_1v1(
@@ -159,6 +162,7 @@ impl RatingService for Unrated {
     fn update_ratings(
         &self,
         _battle_id: i32,
+        _config: &Config,
         _conn: &mut SqliteConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send {
         ready(Ok(()))

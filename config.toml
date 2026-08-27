@@ -15,3 +15,7 @@ model = "glicko2"
 
 [http]
 port = 4000
+
+[[awards]]
+threshold = 16000
+awards = ["BETA_CHALLENGER"]

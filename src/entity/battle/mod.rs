@@ -101,6 +101,7 @@ impl TryFrom<BattleEntity> for Battle {
 pub async fn update_participant_ratings<T>(
     battle_id: i32,
     model: &T,
+    config: &Config,
     conn: &mut SqliteConnection,
 ) -> Result<(), Error>
 where
@@ -134,28 +135,32 @@ where
         let ids = players.iter().map(|s| s.id).collect::<Vec<_>>();
         let ratings = update_ratings(&ids, model, &mut *conn).await?;
 
-        // Grant certain awards
+        // Grant awards
         for (player, rating) in players.into_iter().zip(ratings) {
-            // CHALLENGER MEDAL for the season
-            const CHALLENGER_MEDAL: UserFlags = UserFlags::BETA_CHALLENGER;
+            let mut flags = player.flags;
+            let awards = config
+                .awards
+                .iter()
+                .filter(|award| award.threshold <= rating.ordinal() as i32)
+                .filter(|award| !rating.is_provisional() || award.award_provisional);
 
-            // Do not give awards if the player's ordinal isn't even fucking
-            // visible.
-            if rating.is_provisional() {
-                continue;
+            // Award these guys
+            for award in awards {
+                flags |= award.awards;
             }
 
-            // Only update if the player didn't already have the medal
-            if !player.flags.contains(CHALLENGER_MEDAL) && rating.ordinal().ceil() >= 18000.0 {
+            // Only update if the player's flags actually changed
+            if flags != player.flags {
                 sqlx::query(
                     r#"
                         UPDATE user
-                        SET flags = $2
+                        SET updated_at = $2, flags = $3
                         WHERE id = $1
                         "#,
                 )
                 .bind(player.id)
-                .bind(i32::from(player.flags | CHALLENGER_MEDAL))
+                .bind(Utc::now())
+                .bind(i32::from(flags))
                 .execute(&mut *conn)
                 .await?;
             }

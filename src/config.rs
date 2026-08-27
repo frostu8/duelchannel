@@ -1,9 +1,13 @@
 //! Application configuration.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use chrono::TimeDelta;
 
+use duelchannel_model::user::UserFlags;
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Toml},
@@ -23,6 +27,8 @@ use crate::mmr::{glicko2::Glicko2Config, openskill::OpenSkillConfig};
 pub struct Config {
     /// General server configuration.
     pub server: ServerConfig,
+    /// Medal awards.
+    pub awards: Vec<AwardConfig>,
     /// Mmr config.
     pub mmr: RatingModelConfig,
     /// Object storage configuration.
@@ -59,6 +65,29 @@ impl Default for ServerConfig {
             database_url: None,
             secure_sessions: true,
             encryption_key: None,
+        }
+    }
+}
+
+/// Configuration for awards.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AwardConfig {
+    /// The ordinal threshold required to meet to receive the award.
+    pub threshold: i32,
+    /// If the award can be given while the user is in provisional ratings.
+    pub award_provisional: bool,
+    /// The awards to give out.
+    #[serde(deserialize_with = "deserialize_awards_list")]
+    pub awards: UserFlags,
+}
+
+impl Default for AwardConfig {
+    fn default() -> Self {
+        AwardConfig {
+            threshold: 0,
+            award_provisional: false,
+            awards: UserFlags::empty(),
         }
     }
 }
@@ -197,4 +226,20 @@ where
     format_duration(delta.to_std().expect("positive time delta"))
         .to_string()
         .serialize(serializer)
+}
+
+fn deserialize_awards_list<'de, D>(deserializer: D) -> Result<UserFlags, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let awards = Vec::<String>::deserialize(deserializer)?;
+    let awards = awards
+        .iter()
+        .map(|s| s.trim().parse::<UserFlags>())
+        .collect::<Result<Vec<_>, <UserFlags as FromStr>::Err>>()
+        .map_err(|err| D::Error::custom(err))?;
+
+    Ok(awards
+        .into_iter()
+        .fold(UserFlags::empty(), |acc, x| acc | x))
 }

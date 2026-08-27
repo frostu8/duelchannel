@@ -2,12 +2,14 @@
 
 use std::cmp::min;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fmt::{self, Display, Formatter};
 use std::pin::pin;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use duelchannel_model::user::UserFlags;
 use tokio::io::AsyncWriteExt;
 
+use crate::config::Config;
 use crate::mmr::{Matchup, Rating, RatingModel};
 
 use duelchannel_model::battle::BattleStatus;
@@ -263,6 +265,7 @@ pub async fn replay<T, W>(
     model: &T,
     output: W,
     db: &SqlitePool,
+    config: &Config,
     options: ReplayOptions,
 ) -> eyre::Result<()>
 where
@@ -454,16 +457,13 @@ where
             "VISIBLE"
         };
 
-        let historical_challenger = if user.flags.contains(UserFlags::BETA_CHALLENGER) {
-            "YES"
-        } else {
-            "NO"
-        };
-        let potential_challenger = if user.rating.ordinal() > 18000.0 {
-            "YES"
-        } else {
-            "NO"
-        };
+        let historical_challenger = user.flags.contains(UserFlags::BETA_CHALLENGER);
+        let potential_challenger = config
+            .awards
+            .iter()
+            .filter(|award| award.threshold <= user.rating.ordinal() as i32)
+            .filter(|award| !user.rating.is_provisional() || award.award_provisional)
+            .any(|award| award.awards.contains(UserFlags::BETA_CHALLENGER));
 
         let data = format!(
             "{},{},{},{},{},{},{},{},{},{},{}\n",
@@ -479,12 +479,25 @@ where
             user.rating.deviation,
             user.rating.ordinal(),
             provisional,
-            historical_challenger,
-            potential_challenger,
+            YesNo(historical_challenger),
+            YesNo(potential_challenger),
         );
         output.write_all(data.as_bytes()).await?;
     }
 
     // Done with the replay
     Ok(())
+}
+
+#[derive(Debug)]
+struct YesNo(bool);
+
+impl Display for YesNo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if self.0 {
+            f.write_str("YES")
+        } else {
+            f.write_str("NO")
+        }
+    }
 }
