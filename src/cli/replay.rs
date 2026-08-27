@@ -1,10 +1,10 @@
 //! Replay MMR calculations for tuning.
 
 use std::cmp::min;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::pin::pin;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use duelchannel_model::user::UserFlags;
 use tokio::io::AsyncWriteExt;
 
@@ -53,17 +53,18 @@ struct Duel {
     concluded_at: DateTime<Utc>,
 }
 
-struct RatingPeriod {
+#[derive(Debug, Clone)]
+struct RatingPeriod<T> {
     started_at: DateTime<Utc>,
-    players: HashSet<i32>,
+    players: HashMap<i32, Rating<T>>,
     duels: Vec<i32>,
 }
 
-impl RatingPeriod {
-    pub fn new(started_at: DateTime<Utc>) -> RatingPeriod {
+impl<T> RatingPeriod<T> {
+    pub fn new(started_at: DateTime<Utc>) -> RatingPeriod<T> {
         RatingPeriod {
             started_at,
-            players: HashSet::new(),
+            players: HashMap::new(),
             duels: Vec::new(),
         }
     }
@@ -71,12 +72,13 @@ impl RatingPeriod {
 
 #[derive(Debug, Clone)]
 struct UserHistory<T> {
+    #[allow(dead_code)]
     id: i32,
     short_id: String,
     display_name: Option<String>,
     flags: UserFlags,
     rating: Rating<T>,
-    last_update: Option<DateTime<Utc>>,
+    periods_played: BTreeSet<usize>,
     wins: usize,
     losses: usize,
 }
@@ -90,7 +92,7 @@ impl<T> UserHistory<T> {
             short_id: String::new(),
             display_name: None,
             flags: UserFlags::empty(),
-            last_update: None,
+            periods_played: BTreeSet::new(),
             wins: 0,
             losses: 0,
         }
@@ -109,6 +111,151 @@ impl<T> UserHistory<T> {
     }
 }
 
+#[derive(Debug)]
+struct ReplayEngine<T>
+where
+    T: RatingModel,
+{
+    pub replay_to: DateTime<Utc>,
+    pub duels: HashMap<i32, Duel>,
+    pub user_history: HashMap<i32, UserHistory<T::Data>>,
+    pub rating_periods: Vec<RatingPeriod<T::Data>>,
+}
+
+impl<T> ReplayEngine<T>
+where
+    T: RatingModel,
+{
+    pub fn new(replay_to: DateTime<Utc>) -> Self {
+        ReplayEngine {
+            user_history: HashMap::new(),
+            duels: HashMap::new(),
+            rating_periods: Vec::new(),
+            replay_to,
+        }
+    }
+
+    async fn rate(
+        &mut self,
+        user_id: i32,
+        period_index: usize,
+        matchups: &[Matchup<T::Data>],
+        model: &T,
+    ) -> eyre::Result<Rating<T::Data>> {
+        let period = &self.rating_periods[period_index];
+        let ended_at = period.started_at + model.period();
+
+        let updating_at = min(ended_at, self.replay_to);
+
+        let me_rating = match period.players.get(&user_id) {
+            Some(r) => r.clone(),
+            None => {
+                // Player didn't play last period. Either the player's rating
+                // failed to rollover, or they're just new.
+                model.create_rating(user_id).await?
+            }
+        };
+
+        let user = self
+            .user_history
+            .entry(user_id)
+            .or_insert_with(|| UserHistory::new(me_rating.clone()));
+
+        // Get how many periods the player has been idle
+        let idle_time = user
+            .periods_played
+            .iter()
+            .copied()
+            .rfind(|&idx| idx <= period_index)
+            .map(|idx| self.rating_periods[idx].started_at)
+            .map(|t| updating_at - t);
+        if let Some(idle_time) = idle_time {
+            assert!(idle_time > TimeDelta::zero());
+        }
+
+        // Get fractional period + grace period since the player's last
+        // update
+        let fractional_period = idle_time
+            .map(|t| (t.as_seconds_f32() / model.period().as_seconds_f32()) - model.decay_grace())
+            .map(|t| t.clamp(0.0, 1.0))
+            // player's first duel
+            .unwrap_or(0.0);
+
+        let new_rating = model.rate(&me_rating, matchups, fractional_period).await?;
+
+        user.rating = new_rating;
+        user.wins += matchups
+            .iter()
+            .filter_map(|mu| bool::then_some(mu.position == 1, 1))
+            .sum::<usize>();
+        user.losses += matchups
+            .iter()
+            .filter_map(|mu| bool::then_some(mu.position != 1, 1))
+            .sum::<usize>();
+
+        // Register player for next period
+        if let Some(next_period) = self.rating_periods.get_mut(period_index + 1) {
+            next_period.players.insert(user_id, user.rating.clone());
+        }
+
+        Ok(user.rating.clone())
+    }
+
+    async fn rate_period(&mut self, period_index: usize, model: &T) -> eyre::Result<()> {
+        let period = &mut self.rating_periods[period_index];
+
+        // Iterate over duels
+        let mut matchups = HashMap::<i32, Vec<Matchup<T::Data>>>::new();
+        for id in period.duels.iter() {
+            // Get duel from duels
+            let duel = &self.duels[&id];
+            let (p1, p2) = (&duel.results[0], &duel.results[1]);
+
+            // Find the winner and loser
+            let (winner, loser) = match (p1.no_contest, p2.no_contest) {
+                (false, true) => (p1, p2),
+                (true, false) => (p2, p1),
+                // degenerate duel
+                _ => continue,
+            };
+
+            for (me, opp, my_pos) in [(winner, loser, 1), (loser, winner, 2)] {
+                let opp_rating = match period.players.get(&opp.user_id) {
+                    Some(r) => r.clone(),
+                    None => {
+                        let rating = model.create_rating(opp.user_id).await?;
+                        period.players.insert(opp.user_id, rating.clone());
+
+                        rating
+                    }
+                };
+
+                let matchups = matchups.entry(me.user_id).or_default();
+                matchups.push(Matchup {
+                    opponent: opp_rating,
+                    status: BattleStatus::Concluded,
+                    position: my_pos,
+                    finish_time: me.finish_time.unwrap_or_default(),
+                    no_contest: me.no_contest,
+                });
+            }
+        }
+
+        // Rate players per matchups
+        let user_ids = self
+            .user_history
+            .values()
+            .map(|uh| uh.id)
+            .collect::<Vec<_>>();
+        for user_id in user_ids {
+            let matchups = matchups.get(&user_id).map(|v| v.as_slice()).unwrap_or(&[]);
+            self.rate(user_id, period_index, matchups, model).await?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Replays MMR calculations for all players.
 ///
 /// This only supports 1v1s as of writing.
@@ -123,14 +270,6 @@ where
     W: tokio::io::AsyncWrite,
 {
     let mut output = pin!(output);
-
-    // Initialize hashmaps
-    let mut duels = HashMap::<i32, Duel>::new();
-
-    let mut user_history = HashMap::<i32, UserHistory<T::Data>>::new();
-    let mut user_order = Vec::<i32>::new();
-
-    let mut include_players = HashSet::<i32>::new();
 
     // First, list ALL battles played on the local database, sorted by
     // conclusion order.
@@ -174,14 +313,22 @@ where
     .fetch_all(db)
     .await?;
 
+    // Initialize hashmaps
+    let mut replay_engine = ReplayEngine::<T>::new(replay_to);
+
+    let mut user_order = Vec::<i32>::new();
+    let mut include_players = HashSet::<i32>::new();
+
     for (user_id, short_id, display_name, flags) in db_users {
-        let uh = match user_history.get_mut(&user_id) {
+        let uh = match replay_engine.user_history.get_mut(&user_id) {
             Some(uh) => uh,
             None => {
                 // Initialize rating
                 let rating = model.create_rating(user_id).await?;
-                user_history.insert(user_id, UserHistory::new(rating));
-                user_history.get_mut(&user_id).unwrap()
+                replay_engine
+                    .user_history
+                    .insert(user_id, UserHistory::new(rating));
+                replay_engine.user_history.get_mut(&user_id).unwrap()
             }
         };
 
@@ -202,138 +349,55 @@ where
         user_order.push(user_id);
     }
 
-    let mut rating_periods = Vec::<RatingPeriod>::new();
     for duel_result in duel_results {
-        let duel = duels.entry(duel_result.battle_id).or_insert_with(|| Duel {
-            id: duel_result.battle_id,
-            results: Vec::with_capacity(2),
-            concluded_at: duel_result.concluded_at,
-        });
+        let duel = replay_engine
+            .duels
+            .entry(duel_result.battle_id)
+            .or_insert_with(|| Duel {
+                id: duel_result.battle_id,
+                results: Vec::with_capacity(2),
+                concluded_at: duel_result.concluded_at,
+            });
 
         // Initialize rating periods
-        let period = if let Some(p) = rating_periods.iter_mut().last() {
-            let ended_at = p.started_at + model.period();
-            if duel.concluded_at > ended_at {
-                // Create new rating period
-                rating_periods.push(RatingPeriod::new(duel.concluded_at));
-                rating_periods.iter_mut().last().unwrap()
+        let (period_idx, period) =
+            if let Some((idx, p)) = replay_engine.rating_periods.iter_mut().enumerate().last() {
+                let ended_at = p.started_at + model.period();
+                if duel.concluded_at > ended_at {
+                    // Create new rating period
+                    let idx = replay_engine.rating_periods.len();
+
+                    replay_engine
+                        .rating_periods
+                        .push(RatingPeriod::new(duel.concluded_at));
+                    (idx, &mut replay_engine.rating_periods[idx])
+                } else {
+                    (idx, p)
+                }
             } else {
-                p
-            }
-        } else {
-            rating_periods.push(RatingPeriod::new(duel.concluded_at));
-            rating_periods.iter_mut().last().unwrap()
-        };
+                let idx = replay_engine.rating_periods.len();
+
+                replay_engine
+                    .rating_periods
+                    .push(RatingPeriod::new(duel.concluded_at));
+                (idx, &mut replay_engine.rating_periods[idx])
+            };
 
         if duel.results.len() == 0 {
             // fresh duel, add it to order
             period.duels.push(duel.id);
         }
 
-        // mark player as played in period
-        period.players.insert(duel_result.user_id);
+        if let Some(uh) = replay_engine.user_history.get_mut(&duel_result.user_id) {
+            uh.periods_played.insert(period_idx);
+        }
+
         duel.results.push(duel_result);
     }
 
-    for rating_period in rating_periods.iter() {
-        let ended_at = rating_period.started_at + model.period();
-        let updating_at = min(ended_at, replay_to);
-
-        let mut historical_ratings = user_history
-            .values()
-            .map(|uh| (uh.id, uh.rating.clone()))
-            .collect::<HashMap<i32, Rating<T::Data>>>();
-        let mut matchups = HashMap::<i32, Vec<Matchup<T::Data>>>::new();
-
-        // Iterate over duels
-        for id in rating_period.duels.iter() {
-            // Get duel from duels
-            let duel = &duels[&id];
-            let (p1, p2) = (&duel.results[0], &duel.results[1]);
-
-            // Find the winner and loser
-            let (winner, loser) = match (p1.no_contest, p2.no_contest) {
-                (false, true) => (p1, p2),
-                (true, false) => (p2, p1),
-                // degenerate duel
-                _ => continue,
-            };
-
-            for (me, opp, my_pos) in [(winner, loser, 1), (loser, winner, 2)] {
-                let opp_rating = match historical_ratings.get(&opp.user_id) {
-                    Some(r) => r.clone(),
-                    None => {
-                        let rating = model.create_rating(opp.user_id).await?;
-                        historical_ratings.insert(opp.user_id, rating.clone());
-
-                        rating
-                    }
-                };
-
-                let matchups = matchups.entry(me.user_id).or_default();
-                matchups.push(Matchup {
-                    opponent: opp_rating,
-                    status: BattleStatus::Concluded,
-                    position: my_pos,
-                    finish_time: me.finish_time.unwrap_or_default(),
-                    no_contest: me.no_contest,
-                });
-            }
-        }
-
-        // Rate players per matchups
-        for (&user_id, matchups) in matchups.iter() {
-            let last_update = rating_periods
-                .iter()
-                .rev()
-                .find(|period| period.players.contains(&user_id))
-                .map(|period| period.started_at);
-
-            let me_rating = match historical_ratings.get(&user_id) {
-                Some(r) => r.clone(),
-                None => {
-                    let rating = model.create_rating(user_id).await?;
-                    historical_ratings.insert(user_id, rating.clone());
-
-                    rating
-                }
-            };
-
-            // Get fractional period + grace period since the player's last
-            // update
-            let fractional_period = last_update
-                .map(|t| {
-                    ((updating_at - t).as_seconds_f32() / model.period().as_seconds_f32())
-                        - model.decay_grace()
-                })
-                .map(|t| t.clamp(0.0, 1.0))
-                // player's first duel
-                .unwrap_or(0.0);
-
-            let new_rating = model
-                .rate(&me_rating, matchups.as_slice(), fractional_period)
-                .await?;
-
-            let user = user_history
-                .entry(user_id)
-                .or_insert_with(|| UserHistory::new(me_rating));
-
-            user.rating = new_rating;
-            user.last_update = Some(updating_at);
-
-            user.wins += matchups
-                .iter()
-                .filter_map(|mu| bool::then_some(mu.position == 1, 1))
-                .sum::<usize>();
-            user.losses += matchups
-                .iter()
-                .filter_map(|mu| bool::then_some(mu.position != 1, 1))
-                .sum::<usize>();
-        }
-    }
-
     // Pad extra rating periods
-    let mut started_at = rating_periods
+    let mut started_at = replay_engine
+        .rating_periods
         .iter()
         .last()
         .map(|rp| rp.started_at)
@@ -341,42 +405,20 @@ where
     while started_at < replay_to {
         // Add rating period for posterity
         started_at += model.period();
-        rating_periods.push(RatingPeriod::new(started_at));
+        replay_engine
+            .rating_periods
+            .push(RatingPeriod::new(started_at));
     }
 
-    // Do decay fo all users
-    // Skip users that have been excluded since we don't need them for matchups
-    for uh in user_history.values_mut() {
-        if !include_players.contains(&uh.id) {
-            continue;
-        }
-
-        // Find first period player did play in and add 1
-        let last_update_idx = rating_periods
-            .iter()
-            .rposition(|period| period.players.contains(&uh.id))
-            .map(|i| i + 1);
-        let Some(last_update_idx) = last_update_idx else {
-            // Player didn't do anything.
-            continue;
-        };
-
-        let last_update = rating_periods[last_update_idx].started_at;
-
-        for rating_period in rating_periods.iter().skip(last_update_idx) {
-            let ended_at = rating_period.started_at + model.period();
-            let ended_at = min(ended_at, replay_to);
-
-            let fractional_period = (((ended_at - last_update).as_seconds_f32()
-                / model.period().as_seconds_f32())
-                - model.decay_grace())
-            .clamp(0.0, 1.0);
-
-            // Pass X rating periods.
-            let new_rating = model.rate(&uh.rating, &[], fractional_period).await?;
-            uh.rating = new_rating;
-        }
+    for i in 0..replay_engine.rating_periods.len() {
+        replay_engine.rate_period(i, model).await?;
     }
+
+    let ReplayEngine {
+        user_history,
+        duels,
+        ..
+    } = replay_engine;
 
     if options.print_header {
         output
