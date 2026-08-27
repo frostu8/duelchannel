@@ -176,18 +176,19 @@ where
 
     let participants = sqlx::query_as::<_, ParticipantRow<T>>(
         r#"
-        SELECT r1.*, p.finish_time
-        FROM rating r1, rating r2, participant p, battle b
+        SELECT r1.*, p.finish_time, rp.inserted_at AS period_inserted_at
+        FROM rating r1, rating r2, participant p, battle b, rating_period rp
         WHERE
             p.match_id = $1
             AND p.match_id = b.id
             AND p.user_id = r1.user_id
             AND p.user_id = r2.user_id
+            AND r1.period_id = rp.id
             AND r1.inserted_at <= b.inserted_at
             AND r2.inserted_at <= b.inserted_at
         GROUP BY
             r1.period_id, r1.user_id, r1.rating, r1.deviation, r1.extra,
-            r1.inserted_at, r1.updated_at, p.finish_time
+            r1.inserted_at, r1.updated_at, p.finish_time, rp.inserted_at
         HAVING r1.inserted_at = MAX(r2.inserted_at)
         "#,
     )

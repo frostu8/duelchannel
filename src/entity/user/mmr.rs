@@ -1,5 +1,7 @@
 //! Skill-based rating service.
 
+use std::cmp::min;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::{any::Any, future::ready};
 
@@ -10,7 +12,7 @@ use chrono::{DateTime, Utc};
 use duelchannel_model::battle::BattleStatus;
 
 use serde::{
-    Deserialize, Serialize,
+    Serialize,
     de::{DeserializeOwned, value::UnitDeserializer},
 };
 
@@ -217,7 +219,7 @@ pub struct RatingPeriodEntity {
 ///
 /// These are fetched from the database and are associated with a rating
 /// period.
-#[derive(Clone, Debug, Deref, DerefMut, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deref, DerefMut)]
 pub struct RatingEntity<T = ()> {
     /// The id of the player this is for.
     pub user_id: i32,
@@ -230,12 +232,12 @@ pub struct RatingEntity<T = ()> {
     /// Extra data for the rating system.
     #[deref]
     #[deref_mut]
-    #[serde(flatten)]
     pub extra: T,
     /// When the record was inserted.
     pub inserted_at: DateTime<Utc>,
     /// When the record was updated.
     pub updated_at: DateTime<Utc>,
+    pub period: RatingPeriodEntity,
 }
 
 impl<T> From<RatingEntity<T>> for Rating<T> {
@@ -268,14 +270,20 @@ where
             }),
         };
 
+        let period_id: i32 = row.try_get("period_id")?;
         Ok(RatingEntity {
             user_id: row.try_get("user_id")?,
-            period_id: row.try_get("period_id")?,
+            period_id,
             rating: row.try_get("rating")?,
             deviation: row.try_get("deviation")?,
             inserted_at: row.try_get("inserted_at")?,
             updated_at: row.try_get("updated_at")?,
             extra: extra?,
+            period: RatingPeriodEntity {
+                id: period_id,
+                started_at: row.try_get("period_inserted_at")?,
+                period_elapsed: 0.0,
+            },
         })
     }
 }
@@ -393,8 +401,7 @@ where
 
 /// Catalogs a player rating.
 async fn catalog_rating<T>(
-    period: &RatingPeriodEntity,
-    rating: &Rating<T>,
+    rating: &RatingEntity<T>,
     conn: &mut SqliteConnection,
 ) -> Result<(), Error>
 where
@@ -415,7 +422,7 @@ where
     )
     .bind(now)
     .bind(rating.user_id)
-    .bind(period.id)
+    .bind(rating.period_id)
     .bind(rating.rating)
     .bind(rating.deviation)
     .bind(extra)
@@ -456,321 +463,207 @@ where
     T: RatingModel,
 {
     let mut ratings = Vec::with_capacity(user_ids.len());
-    let mut period: Option<RatingPeriodEntity> = None;
 
+    let mut min_period: Option<RatingPeriodEntity> = None;
     for user_id in user_ids.iter().copied() {
-        // Update players' rating
-        let current_period = next_rating_period_at(user_id, model, time, &mut *conn).await?;
+        // We need to update all participant periods one by one.
+        // Get each player's rating
+        let rating = get_rating(user_id, time, model, conn).await?;
 
-        // Get player's current rating
-        ratings.push(get_rating::<T>(user_id, &mut *conn).await?);
-        period = Some(current_period);
+        if let Some(mp) = min_period.as_ref() {
+            if rating.period.started_at < mp.started_at {
+                min_period = Some(rating.period.clone());
+            }
+        } else {
+            min_period = Some(rating.period.clone());
+        }
+
+        ratings.push(rating);
     }
 
-    let Some(period) = period else {
+    let Some(mut period) = min_period else {
         // There are no ratings to process
         assert!(ratings.len() == 0);
         return Ok(vec![]);
     };
 
-    let mut out = Vec::with_capacity(ratings.len());
-    for rating in ratings {
-        out.push(update_one_rating(&rating, &period, model, &mut *conn).await?);
-    }
-
-    Ok(out)
-}
-
-async fn update_one_rating<T>(
-    rating: &RatingEntity<T::Data>,
-    period: &RatingPeriodEntity,
-    model: &T,
-    conn: &mut SqliteConnection,
-) -> Result<Rating<T::Data>, Error>
-where
-    T: RatingModel,
-{
-    let ends_at = period.started_at + model.period();
-
-    let matchups = fetch_matchups(rating.user_id, period.started_at, ends_at, &mut *conn)
-        .await?
-        .into_iter()
-        .map(mmr::Matchup::<T::Data>::from)
-        .collect::<Vec<_>>();
-
-    // Get the player's new rating
-    let rating = Rating::<T::Data>::from(rating.clone());
-    let new_rating = model
-        .rate(&rating, matchups.as_slice(), period.period_elapsed)
-        .await?;
-
-    // Cap deviation at certain value
-    // TODO: move this into the glicko2 mod, as deviation capping is only a
-    // glicko2 thing; openskill doesn't need this
-    //new_rating.deviation = f32::min(new_rating.deviation, config.defaults.deviation);
-
-    tracing::debug!(?rating, ?new_rating, "updating rating for");
-
-    // Update the cached ordinal
-    let now = Utc::now();
-    sqlx::query(
-        r#"
-        UPDATE user
-        SET ordinal = $3, hide_rating = $4, updated_at = $1
-        WHERE id = $2
-        "#,
-    )
-    .bind(now)
-    .bind(new_rating.user_id)
-    .bind(new_rating.ordinal() as i32)
-    .bind(new_rating.is_provisional())
-    .execute(&mut *conn)
-    .await?;
-
-    Ok(new_rating)
-}
-
-/// Fetches the last start of the rating period for a given user.
-///
-/// If there are no rating periods, this initializes a rating period and
-/// returns it. If there is one, but it has expired, this closes rating
-/// periods until falling on a single rating period.
-pub async fn next_rating_period<T>(
-    user_id: i32,
-    model: &T,
-    conn: &mut SqliteConnection,
-) -> Result<RatingPeriodEntity, Error>
-where
-    T: RatingModel,
-{
-    let now = Utc::now();
-    next_rating_period_at(user_id, model, now, conn).await
-}
-
-/// Fetches the last start of the rating period at the given time.
-///
-/// If there are no rating periods, this initializes a rating period and
-/// returns it. If there is one, but it has expired, this closes rating
-/// periods until falling on a single rating period.
-pub async fn next_rating_period_at<T>(
-    user_id: i32,
-    model: &T,
-    time: DateTime<Utc>,
-    conn: &mut SqliteConnection,
-) -> Result<RatingPeriodEntity, Error>
-where
-    T: RatingModel,
-{
-    // Get last period the player participated in
-    let period = sqlx::query_as::<_, RatingPeriodEntity>(
-        r#"
-        SELECT p.*
-        FROM rating_period p, rating r
-        WHERE
-            r.period_id = p.id
-            AND r.user_id = $1
-        ORDER BY inserted_at DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(user_id)
-    .fetch_optional(&mut *conn)
-    .await?;
-
-    let Some(mut period) = period else {
-        let period = sqlx::query_as::<_, RatingPeriodEntity>(
-            r#"
-            INSERT INTO rating_period (inserted_at)
-            VALUES ($1)
-            RETURNING id, inserted_at
-            "#,
-        )
-        .bind(time)
-        .fetch_one(&mut *conn)
-        .await?;
-
-        tracing::info!(?period, "no mmr logged! creating a new period now...!");
-
-        return Ok(period);
-    };
-
-    // Fast-forward logged periods
-    let ff = sqlx::query_as::<_, RatingPeriodEntity>(
+    // We need to fast forward through existing periods, and add any new ones
+    let mut ff = sqlx::query_as::<_, RatingPeriodEntity>(
         r#"
         SELECT *
         FROM rating_period
-        WHERE inserted_at > $1
+        WHERE
+            inserted_at > $1
+            AND id <> $2
         ORDER BY inserted_at ASC
         "#,
     )
     .bind(period.started_at)
+    .bind(period.id)
     .fetch_all(&mut *conn)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|mut period| {
+        let delta = time - period.started_at;
+        period.period_elapsed =
+            (delta.as_seconds_f32() / model.period().as_seconds_f32()).clamp(0.0, 1.0);
+        period
+    })
+    .collect::<Vec<_>>();
 
     let grace = model.decay_grace();
+    let mut idle_periods = HashMap::<i32, f32>::new();
 
-    let mut idle_periods = 0.0f32;
-    for next_period in ff {
-        let started_at = period.started_at;
-        let ended_at = next_period.started_at;
-
-        // Get player rating
-        let player = get_rating::<T>(user_id, &mut *conn).await?;
-        let player = Rating::from(player);
-
-        // All players get their rating rolled over if they had one.
-        // Fetch the player's matchups
-        let matchups = fetch_matchups(player.user_id, started_at, ended_at, &mut *conn)
-            .await?
-            .into_iter()
-            .map(mmr::Matchup::from)
-            .collect::<Vec<_>>();
-
-        // Idle periods accumulate, but don't start actually eating at your
-        // deviation until after it passes over the grace period.
-        let period_elapsed = if matchups.is_empty() {
-            idle_periods += 1.0;
-            (idle_periods - grace).clamp(0.0, 1.0)
-        } else {
-            idle_periods = 0.0;
-            1.0
-        };
-
-        // Get the player's new rating
-        let new_rating = model
-            .rate(&player, matchups.as_slice(), period_elapsed)
-            .await?;
-
-        let now = Utc::now();
-
-        // Update the player's existing rating
-        sqlx::query(
-            r#"
-            UPDATE user
-            SET ordinal = $3, hide_rating = $4, updated_at = $1
-            WHERE id = $2
-            "#,
-        )
-        .bind(now)
-        .bind(new_rating.user_id)
-        .bind(new_rating.ordinal() as i32)
-        .bind(new_rating.is_provisional())
-        .execute(&mut *conn)
-        .await?;
-
-        // Insert it into the rating period
-        catalog_rating(&next_period, &new_rating, &mut *conn).await?;
-
-        // Update old period
-        period = next_period;
-    }
-
-    // Now, period is the most recent in the database, but check if we need to
-    // close future periods.
-
-    // Close any pending periods
-    let delta = time - period.started_at;
-    let mut elapsed_periods = delta.as_seconds_f32() / model.period().as_seconds_f32();
-
-    period.period_elapsed = f32::min(elapsed_periods, 1.0);
-
-    while elapsed_periods >= 1.0 {
+    loop {
         let ended_at = period.started_at + model.period();
 
-        tracing::debug!(
-            ?period,
-            "closing rating period {} - {}",
-            period.started_at,
-            ended_at
-        );
+        // Get next period for next iteration
+        let next_period = match ff.pop() {
+            // keep fast forwarding
+            Some(period) if period.started_at < time => Some(period),
+            Some(_) => None,
+            None if ended_at < time => {
+                // Create new period
+                let res = sqlx::query(
+                    r#"
+                    INSERT INTO rating_period (inserted_at)
+                    VALUES ($1)
+                    "#,
+                )
+                .bind(ended_at)
+                .execute(&mut *conn)
+                .await?;
 
-        // Insert a new period into the database
-        let mut new_period = sqlx::query_as::<_, RatingPeriodEntity>(
-            r#"
-            INSERT INTO rating_period (inserted_at)
-            VALUES ($1)
-            RETURNING id, inserted_at
-            "#,
-        )
-        .bind(ended_at)
-        .fetch_one(&mut *conn)
-        .await?;
-        new_period.period_elapsed = f32::min(elapsed_periods, 1.0);
+                let delta = time - ended_at;
+                let period = RatingPeriodEntity {
+                    id: res.last_insert_rowid() as i32,
+                    started_at: ended_at,
+                    period_elapsed: (delta.as_seconds_f32() / model.period().as_seconds_f32())
+                        .clamp(0.0, 1.0),
+                };
 
-        // Get player rating
-        let player = get_rating::<T>(user_id, &mut *conn).await?;
-        let player = Rating::from(player);
+                tracing::info!(?period, "creating new rating period");
 
-        // All players get their rating rolled over if they had one.
-        // Fetch the player's matchups
-        let matchups = fetch_matchups(player.user_id, period.started_at, ended_at, &mut *conn)
-            .await?
-            .into_iter()
-            .map(mmr::Matchup::from)
-            .collect::<Vec<_>>();
-
-        // Idle periods accumulate, but don't start actually eating at your
-        // deviation until after it passes over the grace period.
-        let period_elapsed = if matchups.is_empty() {
-            idle_periods += 1.0;
-            (idle_periods - grace).clamp(0.0, 1.0)
-        } else {
-            idle_periods = 0.0;
-            1.0
+                Some(period)
+            }
+            None => None,
         };
 
-        // Get the player's new rating
-        let new_rating = model.rate(&player, &matchups, period_elapsed).await?;
+        for rating in ratings.iter_mut() {
+            let idle_periods = idle_periods.entry(rating.user_id).or_default();
 
-        let now = Utc::now();
+            // Update ratings if the periods are old
+            if rating.period.started_at > period.started_at {
+                continue;
+            }
+            let player = Rating::from(rating.clone());
 
-        // Update the player's existing rating
-        sqlx::query(
-            r#"
-            UPDATE user
-            SET ordinal = $3, hide_rating = $4, updated_at = $1
-            WHERE id = $2
-            "#,
-        )
-        .bind(now)
-        .bind(new_rating.user_id)
-        .bind(new_rating.ordinal() as i32)
-        .bind(new_rating.is_provisional())
-        .execute(&mut *conn)
-        .await?;
+            // Fetch the player's matchups
+            let time_to = min(time, ended_at);
+            let matchups = fetch_matchups(player.user_id, period.started_at, time_to, &mut *conn)
+                .await?
+                .into_iter()
+                .map(mmr::Matchup::from)
+                .collect::<Vec<_>>();
 
-        // Insert it into the rating period
-        catalog_rating(&new_period, &new_rating, &mut *conn).await?;
+            // Idle periods accumulate, but don't start actually eating at your
+            // deviation until after it passes over the grace period.
+            let period_elapsed = if matchups.is_empty() {
+                *idle_periods += period.period_elapsed;
+                (*idle_periods - grace).clamp(0.0, period.period_elapsed)
+            } else {
+                *idle_periods = 0.0;
+                0.0
+            };
 
-        // Continue to next period
-        period = new_period;
-        elapsed_periods -= 1.0;
+            // Get the player's new rating
+            let new_rating = model
+                .rate(&player, matchups.as_slice(), period_elapsed)
+                .await?;
+
+            // Update the player's existing rating
+            sqlx::query(
+                r#"
+                UPDATE user
+                SET ordinal = $3, hide_rating = $4, updated_at = $1
+                WHERE id = $2
+                "#,
+            )
+            .bind(Utc::now())
+            .bind(new_rating.user_id)
+            .bind(new_rating.ordinal() as i32)
+            .bind(new_rating.is_provisional())
+            .execute(&mut *conn)
+            .await?;
+
+            if let Some(next_period) = next_period.as_ref() {
+                // Catalog it into the rating period
+                rating.period = next_period.clone();
+                rating.period_id = next_period.id;
+
+                catalog_rating(&rating, &mut *conn).await?;
+            }
+
+            rating.rating = new_rating.rating;
+            rating.deviation = new_rating.deviation;
+            rating.extra = new_rating.extra;
+        }
+
+        if let Some(next_period) = next_period {
+            period = next_period;
+        } else {
+            break;
+        }
     }
 
-    Ok(period)
+    Ok(ratings
+        .into_iter()
+        .map(|r| Rating {
+            user_id: r.user_id,
+            rating: r.rating,
+            deviation: r.deviation,
+            extra: r.extra,
+        })
+        .collect())
 }
 
-/// Gets a player's last historical record
+/// Gets a player's last historical record along with the rating period the
+/// record is from.
 pub async fn get_rating<T>(
     user_id: i32,
+    time: DateTime<Utc>,
+    model: &T,
     conn: &mut SqliteConnection,
 ) -> Result<RatingEntity<T::Data>, Error>
 where
     T: RatingModel,
 {
-    let rating = sqlx::query_as::<_, RatingEntity<T::Data>>(
+    let mut rating = sqlx::query_as::<_, RatingEntity<T::Data>>(
         r#"
-        SELECT *
-        FROM rating
-        WHERE user_id = $1
+        SELECT
+            r.*,
+            rp.inserted_at AS period_inserted_at
+        FROM rating r, rating_period rp
+        WHERE
+            r.period_id = rp.id
+            AND user_id = $1
+            AND rp.inserted_at <= $2
         ORDER BY inserted_at DESC
         LIMIT 1
         "#,
     )
     .bind(user_id)
+    .bind(time)
     .fetch_one(&mut *conn)
     .await?;
-    RatingEntity::<T::Data>::try_from(rating).map_err(Error::new)
+
+    // Calculate elapsed time
+    let delta = time - rating.period.started_at;
+    rating.period.period_elapsed =
+        (delta.as_seconds_f32() / model.period().as_seconds_f32()).clamp(0.0, 1.0);
+    assert!(rating.period.period_elapsed >= 0.0f32);
+
+    Ok(rating)
 }
 
 #[instrument(skip(conn))]
