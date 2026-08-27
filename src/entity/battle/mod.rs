@@ -280,7 +280,7 @@ impl ParticipantEntity {
                 r#"
                 INSERT INTO roulette (participant_id, item, multiplicity, count)
                 VALUES ($1, $2, $3, $4)
-                ON CONFLICT (item, multiplicity)
+                ON CONFLICT (participant_id, item, multiplicity)
                 DO UPDATE SET count = count + $4
                 "#,
             )

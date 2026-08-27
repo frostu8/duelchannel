@@ -9,5 +9,5 @@ CREATE TABLE roulette (
     -- How many times the item was pulled.
     count INTEGER NOT NULL DEFAULT 0,
 
-    CONSTRAINT item_multiplicity_unique UNIQUE (item, multiplicity)
+    CONSTRAINT roulette_entry_unique UNIQUE (participant_id, item, multiplicity)
 );
