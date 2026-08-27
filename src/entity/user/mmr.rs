@@ -481,7 +481,11 @@ where
     for user_id in user_ids.iter().copied() {
         // We need to update all participant periods one by one.
         // Get each player's rating
-        let rating = get_rating(user_id, time, model, conn).await?;
+        let rating = get_rating(user_id, time, model, conn)
+            .await
+            .map_err(|err| {
+                Error::from(err).with_message(format!("failed to get rating for user {}", user_id))
+            })?;
 
         if let Some(mp) = min_period.as_ref() {
             if rating.period.started_at < mp.started_at {
