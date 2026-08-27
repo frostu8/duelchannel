@@ -229,6 +229,8 @@ pub struct RatingEntity<T = ()> {
     pub rating: f32,
     /// The rating deviation of the player.
     pub deviation: f32,
+    /// Periods this user has been idle for.
+    pub idle_periods: f32,
     /// Extra data for the rating system.
     #[deref]
     #[deref_mut]
@@ -276,6 +278,7 @@ where
             period_id,
             rating: row.try_get("rating")?,
             deviation: row.try_get("deviation")?,
+            idle_periods: row.try_get("idle_periods")?,
             inserted_at: row.try_get("inserted_at")?,
             updated_at: row.try_get("updated_at")?,
             extra: extra?,
@@ -320,7 +323,20 @@ pub async fn init_rating<T>(
 where
     T: RatingModel,
 {
-    let now = Utc::now();
+    init_rating_at(user_id, Utc::now(), model, conn).await
+}
+
+/// Initializes a user's rating, and inserts it into the database.
+pub async fn init_rating_at<T>(
+    user_id: i32,
+    time: impl Into<DateTime<Utc>>,
+    model: &T,
+    conn: &mut SqliteConnection,
+) -> Result<Rating<T::Data>, Error>
+where
+    T: RatingModel,
+{
+    let time = time.into();
 
     let rating = model.create_rating(user_id).await?;
 
@@ -338,7 +354,7 @@ where
         RETURNING id
         "#,
     )
-    .bind(now)
+    .bind(time)
     .bind(user_id)
     .bind(rating.rating)
     .bind(rating.deviation)
@@ -354,7 +370,7 @@ where
         WHERE id = $2
         "#,
     )
-    .bind(now)
+    .bind(time)
     .bind(rating.user_id)
     .bind(rating.ordinal() as i32)
     .bind(rating.is_provisional())
@@ -372,7 +388,7 @@ where
             RETURNING id, inserted_at
             "#,
         )
-        .bind(now)
+        .bind(time)
         .fetch_one(&mut *conn)
         .await?;
 
@@ -386,7 +402,7 @@ where
                 ($1, $1, $2, $3, $4, $5, $6)
             "#,
         )
-        .bind(now)
+        .bind(time)
         .bind(period.id)
         .bind(user_id)
         .bind(rating.rating)
@@ -415,9 +431,9 @@ where
     sqlx::query(
         r#"
         INSERT INTO rating
-            (inserted_at, updated_at, user_id, period_id, rating, deviation, extra)
+            (inserted_at, updated_at, user_id, period_id, rating, deviation, idle_periods, extra)
         VALUES
-            ($1, $1, $2, $3, $4, $5, $6)
+            ($1, $1, $2, $3, $4, $5, $6, $7)
         "#,
     )
     .bind(now)
@@ -425,6 +441,7 @@ where
     .bind(rating.period_id)
     .bind(rating.rating)
     .bind(rating.deviation)
+    .bind(rating.idle_periods)
     .bind(extra)
     //.bind(period.started_at)
     .execute(&mut *conn)
@@ -512,7 +529,6 @@ where
     .collect::<Vec<_>>();
 
     let grace = model.decay_grace();
-    let mut idle_periods = HashMap::<i32, f32>::new();
 
     loop {
         let ended_at = period.started_at + model.period();
@@ -520,9 +536,9 @@ where
         // Get next period for next iteration
         let next_period = match ff.pop() {
             // keep fast forwarding
-            Some(period) if period.started_at < time => Some(period),
+            Some(period) if period.started_at <= time => Some(period),
             Some(_) => None,
-            None if ended_at < time => {
+            None if ended_at <= time => {
                 // Create new period
                 let res = sqlx::query(
                     r#"
@@ -550,8 +566,6 @@ where
         };
 
         for rating in ratings.iter_mut() {
-            let idle_periods = idle_periods.entry(rating.user_id).or_default();
-
             // Update ratings if the periods are old
             if rating.period.started_at > period.started_at {
                 continue;
@@ -569,10 +583,10 @@ where
             // Idle periods accumulate, but don't start actually eating at your
             // deviation until after it passes over the grace period.
             let period_elapsed = if matchups.is_empty() {
-                *idle_periods += period.period_elapsed;
-                (*idle_periods - grace).clamp(0.0, period.period_elapsed)
+                rating.idle_periods += period.period_elapsed;
+                (rating.idle_periods - grace).clamp(0.0, period.period_elapsed)
             } else {
-                *idle_periods = 0.0;
+                rating.idle_periods = 0.0;
                 0.0
             };
 
@@ -596,6 +610,10 @@ where
             .execute(&mut *conn)
             .await?;
 
+            rating.rating = new_rating.rating;
+            rating.deviation = new_rating.deviation;
+            rating.extra = new_rating.extra;
+
             if let Some(next_period) = next_period.as_ref() {
                 // Catalog it into the rating period
                 rating.period = next_period.clone();
@@ -603,10 +621,6 @@ where
 
                 catalog_rating(&rating, &mut *conn).await?;
             }
-
-            rating.rating = new_rating.rating;
-            rating.deviation = new_rating.deviation;
-            rating.extra = new_rating.extra;
         }
 
         if let Some(next_period) = next_period {

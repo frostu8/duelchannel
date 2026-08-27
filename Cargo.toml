@@ -21,7 +21,7 @@ figment = { version = "0.10", features = ["env", "toml"] }
 futures-util = "0.3"
 http = "1"
 serde = { workspace = true }
-sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "chrono"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "chrono", "migrate"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time", "process", "io-std"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "compression-deflate", "cors"] }

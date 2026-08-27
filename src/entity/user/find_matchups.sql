@@ -20,12 +20,12 @@ WITH recent_ratings AS (
 )
 SELECT
     r.*,
+    rp.inserted_at AS period_inserted_at,
     b.status,
     -- +1 to correct for self
     COUNT(*) + 1 - COUNT(NOT op.no_contest AND me.finish_time < op.finish_time) AS position,
     IIF(MIN(op.finish_time) IS NOT NULL, MIN(op.finish_time), me.finish_time) AS finish_time,
-    me.no_contest,
-    rp.inserted_at AS period_inserted_at
+    me.no_contest
 FROM
     battle b, participant op, participant me, recent_ratings r, rating_period rp
 WHERE
@@ -36,9 +36,9 @@ WHERE
     -- Filter out opponents and "me"
     AND me.user_id  = $1
     AND NOT op.user_id = $1
-    -- Only get matches between the bounds
+    -- Only get matches between the bounds (inclusive)
     AND b.concluded_at >= $2
-    AND b.concluded_at < $3
+    AND b.concluded_at <= $3
 -- Group by battles to count how many we are ahead
 GROUP BY b.id, b.status, b.inserted_at, me.finish_time, me.no_contest, rp.inserted_at
 -- we only want matches where two players participated
