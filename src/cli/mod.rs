@@ -49,8 +49,8 @@ pub enum Command {
     Analytics(Analytics),
     #[command(name = "generate-key")]
     GenerateKey(GenerateKey),
-    #[command(name = "mmr")]
-    Mmr(Mmr),
+    #[command(name = "dr")]
+    Dr(Dr),
 }
 
 /// Registers a server with the ring channel API.
@@ -90,9 +90,9 @@ pub enum AnalyticsCommand {
 #[derive(clap::Args, Debug)]
 pub struct BattleAnalytics;
 
-/// Does some Mmr things.
+/// Manage duel ratings on the server.
 #[derive(clap::Args, Debug)]
-pub struct Mmr {
+pub struct Dr {
     /// The command to run.
     #[command(subcommand)]
     pub command: Option<MmrCommand>,

@@ -189,7 +189,7 @@ where
                 let key = base16::encode_lower(key.master());
                 println!("{}", key);
             }
-            Command::Mmr(cli::Mmr {
+            Command::Dr(cli::Dr {
                 command: Some(MmrCommand::Reset(_)),
             }) => {
                 // establish connection
@@ -213,7 +213,7 @@ where
                 model.reset(player_ids, &mut *tx).await?;
                 tx.commit().await?;
             }
-            Command::Mmr(cli::Mmr {
+            Command::Dr(cli::Dr {
                 command: Some(MmrCommand::Replay(mmr_replay)),
             }) => {
                 let Some(model) = model.model() else {
@@ -234,7 +234,7 @@ where
                     }
                 }
             }
-            Command::Mmr(cli::Mmr {
+            Command::Dr(cli::Dr {
                 command: Some(MmrCommand::Dump(MmrDump { exclude })),
             }) => {
                 // establish connection
@@ -260,7 +260,7 @@ where
                 model.dump(std::io::stdout(), &mut *tx).await?;
                 tx.rollback().await?; // rollback participants deletion
             }
-            Command::Mmr(cli::Mmr { command: None }) => {
+            Command::Dr(cli::Dr { command: None }) => {
                 Args::command().print_help().unwrap();
             }
         }
