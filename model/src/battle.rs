@@ -282,7 +282,7 @@ pub struct BattlePoint {
 pub struct BattleStatistics {
     /// The average MMR of the match.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub avg_mmr: Option<i32>,
+    pub avg_mmr: Option<f32>,
     /// The match quality.
     ///
     /// Lower numbers are better.

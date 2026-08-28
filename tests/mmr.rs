@@ -104,8 +104,8 @@ async fn insert_battle(pool: &SqlitePool, winner: i32, loser: i32, at: chrono::D
 }
 
 /// The user's ordinal as would be displayed in the API.
-async fn user_ordinal(pool: &SqlitePool, user_id: i32) -> i32 {
-    sqlx::query_as::<_, (i32,)>("SELECT ordinal FROM user WHERE id = $1")
+async fn user_ordinal(pool: &SqlitePool, user_id: i32) -> f32 {
+    sqlx::query_as::<_, (f32,)>("SELECT ordinal FROM user WHERE id = $1")
         .bind(user_id)
         .fetch_one(pool)
         .await

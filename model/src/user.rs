@@ -44,7 +44,7 @@ pub struct User {
     /// is currently being calibrated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable)]
-    pub dr: Option<Option<i32>>,
+    pub dr: Option<Option<f32>>,
     /// The user flags.
     #[serde_as(as = "TryFromInto<i32>")]
     #[schema(value_type = i32)]

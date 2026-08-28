@@ -462,7 +462,7 @@ where
         let potential_challenger = config
             .awards
             .values()
-            .filter(|award| award.threshold <= user.rating.ordinal() as i32)
+            .filter(|award| award.threshold as f32 <= user.rating.ordinal())
             .filter(|award| !user.rating.is_provisional() || award.award_provisional)
             .any(|award| award.flag.contains(UserFlags::BETA_CHALLENGER));
 

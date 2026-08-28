@@ -46,7 +46,7 @@ pub trait RatingService: Send + Sync {
         &self,
         user_id: i32,
         conn: &mut SqliteConnection,
-    ) -> impl Future<Output = Result<Option<(i32, bool)>, Error>> + Send;
+    ) -> impl Future<Output = Result<Option<(f32, bool)>, Error>> + Send;
 
     /// Updates the ratings of a list of users.
     fn update_ratings(
@@ -95,10 +95,10 @@ where
         &self,
         user_id: i32,
         conn: &mut SqliteConnection,
-    ) -> Result<Option<(i32, bool)>, Error> {
+    ) -> Result<Option<(f32, bool)>, Error> {
         init_rating::<Self::Model>(user_id, self, conn)
             .await
-            .map(|r| (r.ordinal() as i32, r.is_provisional()))
+            .map(|r| (r.ordinal(), r.is_provisional()))
             .map(Some)
     }
 
@@ -153,7 +153,7 @@ impl RatingService for Unrated {
         &self,
         _user_id: i32,
         _conn: &mut SqliteConnection,
-    ) -> impl Future<Output = Result<Option<(i32, bool)>, Error>> + Send {
+    ) -> impl Future<Output = Result<Option<(f32, bool)>, Error>> + Send {
         ready(Ok(None))
     }
 
@@ -368,7 +368,7 @@ where
     )
     .bind(time)
     .bind(rating.user_id)
-    .bind(rating.ordinal() as i32)
+    .bind(rating.ordinal())
     .bind(rating.is_provisional())
     .execute(&mut *conn)
     .await?;
@@ -605,7 +605,7 @@ where
             )
             .bind(Utc::now())
             .bind(new_rating.user_id)
-            .bind(new_rating.ordinal() as i32)
+            .bind(new_rating.ordinal())
             .bind(new_rating.is_provisional())
             .execute(&mut *conn)
             .await?;

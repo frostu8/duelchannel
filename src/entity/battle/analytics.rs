@@ -16,7 +16,7 @@ use crate::{
 #[derive(Clone, Debug, FromRow)]
 pub struct BattleStatistics {
     pub match_id: i32,
-    pub avg_mmr: Option<i32>,
+    pub avg_mmr: Option<f32>,
     pub quality: Option<f32>,
     pub finish_time: Option<i32>,
     pub inserted_at: DateTime<Utc>,
@@ -204,9 +204,9 @@ where
         .map(|r| r.map(Rating::from).map_err(Error::new))
         .collect::<Result<Vec<_>, Error>>()?;
 
-    let ordinal_sum: i32 = ratings.iter().cloned().map(|r| r.ordinal() as i32).sum();
+    let ordinal_sum: f32 = ratings.iter().cloned().map(|r| r.ordinal()).sum();
     let avg_mmr = if ratings.len() > 0 {
-        Some(ordinal_sum / ratings.len() as i32)
+        Some(ordinal_sum / ratings.len() as f32)
     } else {
         None
     };

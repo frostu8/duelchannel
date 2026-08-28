@@ -21,7 +21,7 @@ pub struct UserEntity {
     pub avatar_url: Option<String>,
     #[sqlx(try_from = "i32")]
     pub flags: UserFlags,
-    pub ordinal: Option<i32>,
+    pub ordinal: Option<f32>,
     pub hide_rating: bool,
     pub inserted_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -344,7 +344,7 @@ where
         let awards = config
             .awards
             .values()
-            .filter(|award| award.threshold <= rating.ordinal() as i32)
+            .filter(|award| award.threshold as f32 <= rating.ordinal())
             .filter(|award| !rating.is_provisional() || award.award_provisional);
 
         // Award these guys
