@@ -156,7 +156,9 @@ where
         WHERE
             p.parent_id = u.id
             AND ($2 IS NULL OR p.public_key = $2)
-        ORDER BY ordinal DESC
+        ORDER BY
+            hide_rating ASC,
+            ordinal DESC
         LIMIT $1
         "#,
     )
