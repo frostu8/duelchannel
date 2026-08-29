@@ -2,6 +2,8 @@
 
 pub mod mmr;
 
+use std::cmp::max;
+
 use chrono::{DateTime, Utc};
 
 use duelchannel_model::{CurrentUser, Profile, Rrid, User, user::UserFlags};
@@ -23,6 +25,7 @@ pub struct UserEntity {
     pub flags: UserFlags,
     pub ordinal: Option<f32>,
     pub hide_rating: bool,
+    pub matches_until_rated: i32,
     pub inserted_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 
@@ -77,8 +80,9 @@ impl TryFrom<UserEntity> for User {
     type Error = MissingData;
 
     fn try_from(value: UserEntity) -> Result<Self, Self::Error> {
+        // DR is hidden while the player is still calibrating
         let dr = match value.ordinal {
-            Some(dr) if !value.hide_rating => Some(Some(dr)),
+            Some(dr) if value.matches_until_rated <= 0 => Some(Some(dr)),
             Some(_dr) => Some(None),
             None => None,
         };
@@ -93,6 +97,10 @@ impl TryFrom<UserEntity> for User {
             display_name: value.display_name,
             avatar_url: value.avatar_url,
             dr,
+            matches_until_rated: match value.ordinal {
+                Some(_) => Some(max(value.matches_until_rated, 0) as u32),
+                None => None,
+            },
             matches_played,
             win_ratio: if matches_played > 0 {
                 statistics.wins as f32 / matches_played as f32

@@ -1,6 +1,6 @@
 //! Skill-based rating service.
 
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::fmt::Debug;
 use std::{any::Any, future::ready};
 
@@ -40,13 +40,14 @@ pub trait RatingService: Send + Sync {
 
     /// Creates a user's rating.
     ///
-    /// This returns the user's ordinal and whether or not it should be hidden,
-    /// or `None` if there is no model in-use.
+    /// Returns the user's ordinal plus their provisional counter, or `None`
+    /// if there is no model in use.
     fn create_rating(
         &self,
         user_id: i32,
+        config: &Config,
         conn: &mut SqliteConnection,
-    ) -> impl Future<Output = Result<Option<(f32, bool)>, Error>> + Send;
+    ) -> impl Future<Output = Result<Option<(f32, u32)>, Error>> + Send;
 
     /// Updates the ratings of a list of users.
     fn update_ratings(
@@ -66,6 +67,7 @@ pub trait RatingService: Send + Sync {
     fn reset<I>(
         &self,
         players: I,
+        config: &Config,
         conn: &mut SqliteConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send
     where
@@ -94,11 +96,12 @@ where
     async fn create_rating(
         &self,
         user_id: i32,
+        config: &Config,
         conn: &mut SqliteConnection,
-    ) -> Result<Option<(f32, bool)>, Error> {
-        init_rating::<Self::Model>(user_id, self, conn)
+    ) -> Result<Option<(f32, u32)>, Error> {
+        init_rating::<Self::Model>(user_id, config, self, conn)
             .await
-            .map(|r| (r.ordinal(), r.is_provisional()))
+            .map(|r| (r.ordinal(), config.mmr.matches_until_rated))
             .map(Some)
     }
 
@@ -119,13 +122,18 @@ where
         self.quality(ratings).await.map(Some)
     }
 
-    async fn reset<I>(&self, players: I, conn: &mut SqliteConnection) -> Result<(), Error>
+    async fn reset<I>(
+        &self,
+        players: I,
+        config: &Config,
+        conn: &mut SqliteConnection,
+    ) -> Result<(), Error>
     where
         I: IntoIterator<Item = i32> + Send,
         I::IntoIter: Send,
     {
         for id in players.into_iter() {
-            init_rating(id, self, conn).await?;
+            init_rating(id, config, self, conn).await?;
         }
         Ok(())
     }
@@ -152,8 +160,9 @@ impl RatingService for Unrated {
     fn create_rating(
         &self,
         _user_id: i32,
+        _config: &Config,
         _conn: &mut SqliteConnection,
-    ) -> impl Future<Output = Result<Option<(f32, bool)>, Error>> + Send {
+    ) -> impl Future<Output = Result<Option<(f32, u32)>, Error>> + Send {
         ready(Ok(None))
     }
 
@@ -176,6 +185,7 @@ impl RatingService for Unrated {
     fn reset<I>(
         &self,
         _players: I,
+        _config: &Config,
         _conn: &mut SqliteConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send
     where
@@ -235,6 +245,7 @@ pub struct RatingEntity<T = ()> {
     pub inserted_at: DateTime<Utc>,
     /// When the record was updated.
     pub updated_at: DateTime<Utc>,
+    pub matches_until_rated: i32,
     pub period: RatingPeriodEntity,
 }
 
@@ -277,6 +288,7 @@ where
             idle_periods: row.try_get("idle_periods")?,
             inserted_at: row.try_get("inserted_at")?,
             updated_at: row.try_get("updated_at")?,
+            matches_until_rated: row.try_get("matches_until_rated")?,
             extra: extra?,
             period: RatingPeriodEntity {
                 id: period_id,
@@ -313,19 +325,21 @@ impl<T> From<Matchup<T>> for mmr::Matchup<T> {
 /// Initializes a user's rating, and inserts it into the database.
 pub async fn init_rating<T>(
     user_id: i32,
+    config: &Config,
     model: &T,
     conn: &mut SqliteConnection,
 ) -> Result<Rating<T::Data>, Error>
 where
     T: RatingModel,
 {
-    init_rating_at(user_id, Utc::now(), model, conn).await
+    init_rating_at(user_id, Utc::now(), config, model, conn).await
 }
 
 /// Initializes a user's rating, and inserts it into the database.
 pub async fn init_rating_at<T>(
     user_id: i32,
     time: impl Into<DateTime<Utc>>,
+    config: &Config,
     model: &T,
     conn: &mut SqliteConnection,
 ) -> Result<Rating<T::Data>, Error>
@@ -334,6 +348,7 @@ where
 {
     let time = time.into();
 
+    let matches_until_rated = config.mmr.matches_until_rated;
     let rating = model.create_rating(user_id).await?;
 
     // serialize extra data
@@ -342,8 +357,8 @@ where
     let result = sqlx::query(
         r#"
         INSERT INTO rating
-            (period_id, inserted_at, updated_at, user_id, rating, deviation, extra)
-        SELECT p.id, $1, $1, $2, $3, $4, $5
+            (period_id, inserted_at, updated_at, user_id, rating, deviation, matches_until_rated, extra)
+        SELECT p.id, $1, $1, $2, $3, $4, $5, $6
         FROM rating_period p
         ORDER BY p.inserted_at DESC
         LIMIT 1
@@ -354,6 +369,7 @@ where
     .bind(user_id)
     .bind(rating.rating)
     .bind(rating.deviation)
+    .bind(matches_until_rated as i32)
     .bind(&extra)
     .execute(&mut *conn)
     .await?;
@@ -362,14 +378,15 @@ where
     sqlx::query(
         r#"
         UPDATE user
-        SET ordinal = $3, hide_rating = $4, updated_at = $1
+        SET ordinal = $3, hide_rating = $4, matches_until_rated = $5, updated_at = $1
         WHERE id = $2
         "#,
     )
     .bind(time)
     .bind(rating.user_id)
     .bind(rating.ordinal())
-    .bind(rating.is_provisional())
+    .bind(matches_until_rated > 0)
+    .bind(matches_until_rated as i32)
     .execute(&mut *conn)
     .await?;
 
@@ -393,9 +410,9 @@ where
         sqlx::query(
             r#"
             INSERT INTO rating
-                (inserted_at, updated_at, period_id, user_id, rating, deviation, extra)
+                (inserted_at, updated_at, period_id, user_id, rating, deviation, matches_until_rated, extra)
             VALUES
-                ($1, $1, $2, $3, $4, $5, $6)
+                ($1, $1, $2, $3, $4, $5, $6, $7)
             "#,
         )
         .bind(time)
@@ -403,6 +420,7 @@ where
         .bind(user_id)
         .bind(rating.rating)
         .bind(rating.deviation)
+        .bind(matches_until_rated as i32)
         .bind(&extra)
         .execute(&mut *conn)
         .await?;
@@ -427,9 +445,9 @@ where
     sqlx::query(
         r#"
         INSERT INTO rating
-            (inserted_at, updated_at, user_id, period_id, rating, deviation, idle_periods, extra)
+            (inserted_at, updated_at, user_id, period_id, rating, deviation, idle_periods, extra, matches_until_rated)
         VALUES
-            ($1, $1, $2, $3, $4, $5, $6, $7)
+            ($1, $1, $2, $3, $4, $5, $6, $7, $8)
         "#,
     )
     .bind(now)
@@ -439,6 +457,7 @@ where
     .bind(rating.deviation)
     .bind(rating.idle_periods)
     .bind(extra)
+    .bind(rating.matches_until_rated)
     //.bind(period.started_at)
     .execute(&mut *conn)
     .await
@@ -590,6 +609,10 @@ where
                 0.0
             };
 
+            // Find matches until rated; difference between last catalog and
+            // num of matchups
+            let matches_until_rated = max(rating.matches_until_rated - matchups.len() as i32, 0);
+
             // Get the player's new rating
             let new_rating = model
                 .rate(&player, matchups.as_slice(), period_elapsed)
@@ -599,20 +622,23 @@ where
             sqlx::query(
                 r#"
                 UPDATE user
-                SET ordinal = $3, hide_rating = $4, updated_at = $1
+                SET ordinal = $3, hide_rating = $4, matches_until_rated = $5, updated_at = $1
                 WHERE id = $2
                 "#,
             )
             .bind(Utc::now())
             .bind(new_rating.user_id)
             .bind(new_rating.ordinal())
-            .bind(new_rating.is_provisional())
+            .bind(matches_until_rated > 0)
+            .bind(matches_until_rated)
             .execute(&mut *conn)
             .await?;
 
             rating.rating = new_rating.rating;
             rating.deviation = new_rating.deviation;
             rating.extra = new_rating.extra;
+
+            rating.matches_until_rated = matches_until_rated;
 
             if let Some(next_period) = next_period.as_ref() {
                 // Catalog it into the rating period

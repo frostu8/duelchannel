@@ -11,11 +11,13 @@ bucket = "duelchannel-replays-bucket"
 region = "us-east-2"
 
 [mmr]
-model = "glicko2"
+matches_until_rated = 10
+
+[mmr.model.glicko2]
 period = "24h"
 
 [http]
 port = 4000
 
 [awards.beta_challenger]
-threshold = 16000
+threshold = 16300

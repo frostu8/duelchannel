@@ -452,6 +452,9 @@ where
             .await?;
     }
 
+    // Preload again to get new updates
+    battle.preload_participants(&mut *tx).await?;
+
     // Create battle response
     let replay_url = get_replay_url(&battle, &state.config);
 

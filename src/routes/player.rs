@@ -112,10 +112,10 @@ where
     }
 
     // Initialize rating if it's enabled
-    let dr = match model.create_rating(row.id, &mut *tx).await? {
-        // (ordinal, hide_rating)
-        Some((dr, false)) => Some(Some(dr)),
-        Some((_dr, true)) => Some(None),
+    let dr = match model.create_rating(row.id, &state.config, &mut *tx).await? {
+        // (ordinal, matches_until_rated)
+        Some((dr, 0)) => Some(Some(dr)),
+        Some((_dr, _)) => Some(None),
         None => None,
     };
 
@@ -157,7 +157,7 @@ where
             p.parent_id = u.id
             AND ($2 IS NULL OR p.public_key = $2)
         ORDER BY
-            hide_rating ASC,
+            matches_until_rated ASC,
             ordinal DESC
         LIMIT $1
         "#,

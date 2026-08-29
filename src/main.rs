@@ -98,7 +98,7 @@ async fn main() -> eyre::Result<()> {
     let config = read_config(config_path)?;
 
     // Setup MMR w/ config
-    match &config.mmr {
+    match &config.mmr.model {
         RatingModelConfig::Unrated => with_rating_model(cli, config, Unrated).await,
         RatingModelConfig::Glicko2(mmr_config) => {
             let model = Glicko2::new(mmr_config.clone());
@@ -210,7 +210,7 @@ where
                     .into_iter()
                     .map(|(id,)| id);
 
-                model.reset(player_ids, &mut *tx).await?;
+                model.reset(player_ids, &config, &mut *tx).await?;
                 tx.commit().await?;
             }
             Command::Dr(cli::Dr {

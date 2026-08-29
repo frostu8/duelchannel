@@ -45,6 +45,12 @@ pub struct User {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable)]
     pub dr: Option<Option<f32>>,
+    /// How many more matches until the user's DR is displayed.
+    ///
+    /// If this field is absent, skill ratings have been disabled on the
+    /// server. Otherwise, always present, even when zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matches_until_rated: Option<u32>,
     /// The user flags.
     #[serde_as(as = "TryFromInto<i32>")]
     #[schema(value_type = i32)]

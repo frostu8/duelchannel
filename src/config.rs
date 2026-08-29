@@ -31,7 +31,7 @@ pub struct Config {
     /// Medal awards, keyed by award name.
     pub awards: HashMap<String, AwardConfig>,
     /// Mmr config.
-    pub mmr: RatingModelConfig,
+    pub mmr: MmrConfig,
     /// Object storage configuration.
     pub cdn: StorageConfig,
     /// HTTP server configuration.
@@ -155,9 +155,31 @@ pub struct S3Config {
     pub access_key_secret: String,
 }
 
-/// Configuration for MMR.
+/// MMR configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "model", rename_all = "snake_case")]
+#[serde(default)]
+pub struct MmrConfig {
+    /// Number of matches a player must play before their DR is displayed.
+    ///
+    /// DR will not be available on the API unless a player has played this
+    /// many matches since season start.
+    pub matches_until_rated: u32,
+    /// The active rating model.
+    pub model: RatingModelConfig,
+}
+
+impl Default for MmrConfig {
+    fn default() -> Self {
+        MmrConfig {
+            matches_until_rated: 10,
+            model: RatingModelConfig::default(),
+        }
+    }
+}
+
+/// The active rating model.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RatingModelConfig {
     Unrated,
     Glicko2(Glicko2Config),
