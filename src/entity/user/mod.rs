@@ -11,7 +11,7 @@ use duelchannel_model::{
     CurrentUser, Profile, Rrid, User,
     user::{Rank, UnknownRank, UserFlags},
 };
-use sea_query::{Expr, ExprTrait as _, Iden, JoinType, Query, SqliteQueryBuilder};
+use sea_query::{Expr, ExprTrait as _, Iden, Query, SqliteQueryBuilder};
 use sea_query_sqlx::SqlxBinder as _;
 
 use crate::{config::Config, entity::MissingData, error::Error, mmr::RatingModel, short_id};
@@ -313,7 +313,6 @@ pub async fn get_user_by_public_key(
 #[derive(Iden)]
 enum Table {
     User,
-    Participant,
 }
 
 /// Update ratings of all users passed to the function.
