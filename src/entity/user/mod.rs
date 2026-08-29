@@ -331,7 +331,7 @@ pub async fn update_post_battle<T>(
 where
     T: RatingModel,
 {
-    #[derive(FromRow)]
+    #[derive(Debug, FromRow)]
     struct UserRow {
         id: i32,
         #[sqlx(try_from = "i32")]
@@ -350,11 +350,6 @@ where
         .column((Table::User, "flags"))
         .column((Table::User, "rank"))
         .from(Table::User)
-        .join(
-            JoinType::Join,
-            Table::Participant,
-            Expr::col((Table::User, "id")).equals((Table::Participant, "user_id")),
-        )
         .and_where(Expr::col((Table::User, "id")).is_in(user_ids.iter().copied()))
         .build_sqlx(SqliteQueryBuilder);
 
@@ -402,40 +397,28 @@ where
         };
 
         let mut query = Query::update();
+        let mut should_update = false;
         query
             .table(Table::User)
             .value("updated_at", Utc::now())
             .and_where(Expr::col((Table::User, "id")).eq(player.id));
 
         if let Some(rank) = rank_update {
-            sqlx::query(
-                r#"
-                    UPDATE user
-                    SET updated_at = $2, rank = $3
-                    WHERE id = $1
-                    "#,
-            )
-            .bind(player.id)
-            .bind(Utc::now())
-            .bind(rank.to_string())
-            .execute(&mut *conn)
-            .await?;
+            should_update = true;
+            query.value("rank", rank.to_string());
         }
 
         // Only update if the player's flags actually changed
         if flags != player.flags {
-            sqlx::query(
-                r#"
-                    UPDATE user
-                    SET updated_at = $2, flags = $3
-                    WHERE id = $1
-                    "#,
-            )
-            .bind(player.id)
-            .bind(Utc::now())
-            .bind(i32::from(flags))
-            .execute(&mut *conn)
-            .await?;
+            should_update = true;
+            query.value("flags", i32::from(flags));
+        }
+
+        if should_update {
+            let (query, values) = query.build_sqlx(SqliteQueryBuilder);
+            sqlx::query_with(sqlx::AssertSqlSafe(query), values)
+                .execute(&mut *conn)
+                .await?;
         }
     }
 

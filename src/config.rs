@@ -24,7 +24,7 @@ use eyre::Error;
 use crate::mmr::{glicko2::Glicko2Config, openskill::OpenSkillConfig};
 
 /// Full application configuration.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     /// General server configuration.
     pub server: ServerConfig,
@@ -41,6 +41,23 @@ pub struct Config {
     pub http: HttpConfig,
     /// Discord configuration.
     pub discord: Option<DiscordConfig>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        let mut ranks = HashMap::new();
+        ranks.insert("c".into(), RankConfig::default());
+
+        Config {
+            server: Default::default(),
+            awards: Default::default(),
+            ranks,
+            mmr: Default::default(),
+            cdn: Default::default(),
+            http: Default::default(),
+            discord: Default::default(),
+        }
+    }
 }
 
 /// General server configuration.
@@ -296,13 +313,7 @@ impl Config {
         self.ranks
             .values()
             .filter(|rank| ordinal >= rank.threshold as f32)
-            .reduce(|acc, rank| {
-                if acc.threshold < rank.threshold {
-                    rank
-                } else {
-                    acc
-                }
-            })
+            .max_by(|a, b| a.threshold.cmp(&b.threshold))
             .map(|rank| rank.rank)
     }
 }

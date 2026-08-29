@@ -133,20 +133,20 @@ impl From<UserFlags> for i32 {
     ToSchema,
 )]
 pub enum Rank {
-    /// X rank - top 1%
-    X,
-    /// SS rank - 1-5%
-    SS,
-    /// S rank - 5-10%
-    S,
-    /// AA rank - 10-20%
-    AA,
-    /// A rank - 20-35%
-    A,
-    /// B rank - 35-60%
-    B,
     /// C rank - 60-100%
     C,
+    /// B rank - 35-60%
+    B,
+    /// A rank - 20-35%
+    A,
+    /// AA rank - 10-20%
+    AA,
+    /// S rank - 5-10%
+    S,
+    /// SS rank - 1-5%
+    SS,
+    /// X rank - top 1%
+    X,
 }
 
 impl Rank {
