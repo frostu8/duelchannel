@@ -237,7 +237,7 @@ impl UserBuilder {
                                 avatar_url
                             )
                         VALUES ($1, $1, $2, $3, $4, $5)
-                        RETURNING id, short_id, display_name, avatar_url, flags, ordinal, hide_rating, inserted_at, updated_at
+                        RETURNING id, short_id, display_name, avatar_url, flags, ordinal, hide_rating, matches_until_rated, inserted_at, updated_at
                         "#,
                     )
                     .bind(timestamp)
