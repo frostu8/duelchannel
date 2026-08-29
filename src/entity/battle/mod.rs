@@ -22,7 +22,10 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    entity::{MissingData, user::UserEntity},
+    entity::{
+        MissingData,
+        user::{self, UserEntity},
+    },
     error::Error,
     short_id::IdsExhausted,
 };
@@ -79,7 +82,7 @@ impl BattleEntity {
 }
 
 impl TryFrom<BattleEntity> for Battle {
-    type Error = MissingData;
+    type Error = user::NormalizeError;
 
     fn try_from(value: BattleEntity) -> Result<Self, Self::Error> {
         Ok(Battle {
@@ -90,7 +93,7 @@ impl TryFrom<BattleEntity> for Battle {
                 .ok_or_else(|| MissingData::new("participants"))?
                 .into_iter()
                 .map(Participant::try_from)
-                .collect::<Result<Vec<_>, MissingData>>()?,
+                .collect::<Result<Vec<_>, user::NormalizeError>>()?,
             status: value.status,
             margin_score: value.margin_score,
             replay_url: None,
@@ -318,7 +321,7 @@ impl ParticipantEntity {
 }
 
 impl TryFrom<ParticipantEntity> for Participant {
-    type Error = MissingData;
+    type Error = user::NormalizeError;
 
     fn try_from(value: ParticipantEntity) -> Result<Self, Self::Error> {
         Ok(Participant {
@@ -327,6 +330,7 @@ impl TryFrom<ParticipantEntity> for Participant {
                 .ok_or_else(|| MissingData {
                     field_name: String::from("user"),
                 })
+                .map_err(user::NormalizeError::from)
                 .and_then(User::try_from)?,
             roulette: value
                 .roulette
@@ -414,6 +418,7 @@ fn select_participants() -> SelectStatement {
         .expr_as(Expr::col((User, "avatar_url")), "user_avatar_url")
         .expr_as(Expr::col((User, "flags")), "user_flags")
         .expr_as(Expr::col((User, "ordinal")), "user_ordinal")
+        .expr_as(Expr::col((User, "rank")), "user_rank")
         .expr_as(Expr::col((User, "hide_rating")), "user_hide_rating")
         .expr_as(
             Expr::col((User, "matches_until_rated")),
@@ -452,6 +457,7 @@ fn unpack_participant(row: SqliteRow) -> Result<ParticipantEntity, sqlx::Error> 
                     source: Box::new(err),
                 })?,
             ordinal: row.try_get("user_ordinal")?,
+            rank: row.try_get("user_rank")?,
             hide_rating: row.try_get("user_hide_rating")?,
             matches_until_rated: row.try_get("user_matches_until_rated")?,
             inserted_at: row.try_get("user_inserted_at")?,

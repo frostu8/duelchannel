@@ -8,7 +8,7 @@ use std::{
 use chrono::TimeDelta;
 
 use derive_more::Display;
-use duelchannel_model::user::UserFlags;
+use duelchannel_model::user::{Rank, UserFlags};
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Toml},
@@ -30,6 +30,9 @@ pub struct Config {
     pub server: ServerConfig,
     /// Medal awards, keyed by award name.
     pub awards: HashMap<String, AwardConfig>,
+    /// Rank thresholds, keyed by rank name ("x", "ss", "s", ...).
+    #[serde(rename = "rank")]
+    pub ranks: HashMap<String, RankConfig>,
     /// Mmr config.
     pub mmr: MmrConfig,
     /// Object storage configuration.
@@ -91,6 +94,26 @@ impl Default for AwardConfig {
             threshold: 0,
             award_provisional: false,
             flag: UserFlags::empty(),
+        }
+    }
+}
+
+/// Configuration for awards.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct RankConfig {
+    /// The ordinal threshold required to meet to enter the rank, or to drop
+    /// below it.
+    pub threshold: i32,
+    /// The rank to award.
+    pub rank: Rank,
+}
+
+impl Default for RankConfig {
+    fn default() -> Self {
+        RankConfig {
+            threshold: 0,
+            rank: Rank::C,
         }
     }
 }
@@ -234,8 +257,12 @@ pub fn read_config(config_file: impl AsRef<Path>) -> Result<Config, Error> {
         .map_err(Error::from)?;
 
     // Resolve award names
-    for (name, award) in &mut config.awards {
+    for (name, award) in config.awards.iter_mut() {
         award.flag = award_from_name(name).map_err(Error::from)?;
+    }
+    // Resolve rank names
+    for (name, rank) in config.ranks.iter_mut() {
+        rank.rank = name.parse::<Rank>().map_err(Error::from)?;
     }
 
     Ok(config)
@@ -260,12 +287,39 @@ where
         .serialize(serializer)
 }
 
+impl Config {
+    /// Classifies an ordinal into a rank.
+    ///
+    /// Returns the best rank whose floor the ordinal meets, or none if it
+    /// doesn't meet any rank criteria.
+    pub fn classify_rank(&self, ordinal: f32) -> Option<Rank> {
+        self.ranks
+            .values()
+            .filter(|rank| ordinal >= rank.threshold as f32)
+            .reduce(|acc, rank| {
+                if acc.threshold < rank.threshold {
+                    rank
+                } else {
+                    acc
+                }
+            })
+            .map(|rank| rank.rank)
+    }
+}
+
 /// An award name in the configuration was not recognized.
 #[derive(Debug, Display)]
 #[display("unknown award: {_0}")]
 pub struct InvalidAward(pub String);
 
 impl std::error::Error for InvalidAward {}
+
+/// A rank name in the configuration was not recognized.
+#[derive(Debug, Display)]
+#[display("unknown rank: {_0}")]
+pub struct InvalidRank(pub String);
+
+impl std::error::Error for InvalidRank {}
 
 fn award_from_name(name: &str) -> Result<UserFlags, InvalidAward> {
     match name {

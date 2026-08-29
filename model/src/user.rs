@@ -1,12 +1,15 @@
 //! User representations.
 
-use std::str::FromStr;
+use std::{
+    fmt::{self, Display, Formatter},
+    str::FromStr,
+};
 
 use derive_more::{Deref, DerefMut, Display};
 
 use serde::{Deserialize, Serialize};
 
-use serde_with::{TryFromInto, serde_as};
+use serde_with::{DeserializeFromStr, SerializeDisplay, TryFromInto, serde_as};
 
 use utoipa::ToSchema;
 
@@ -45,6 +48,12 @@ pub struct User {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable)]
     pub dr: Option<Option<f32>>,
+    /// The user's rank.
+    ///
+    /// See [`User::dr`] for rules on visibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable)]
+    pub rank: Option<Option<Rank>>,
     /// How many more matches until the user's DR is displayed.
     ///
     /// If this field is absent, skill ratings have been disabled on the
@@ -105,7 +114,97 @@ impl From<UserFlags> for i32 {
     }
 }
 
+/// A user's rank.
+///
+/// The duelchannel API supports a select number of ranks.
+///
+/// Below are the target percentiles of each rank.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    DeserializeFromStr,
+    SerializeDisplay,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    ToSchema,
+)]
+pub enum Rank {
+    /// X rank - top 1%
+    X,
+    /// SS rank - 1-5%
+    SS,
+    /// S rank - 5-10%
+    S,
+    /// AA rank - 10-20%
+    AA,
+    /// A rank - 20-35%
+    A,
+    /// B rank - 35-60%
+    B,
+    /// C rank - 60-100%
+    C,
+}
+
+impl Rank {
+    /// The name of each rank, as it appears over the wire.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Rank::X => "x",
+            Rank::SS => "ss",
+            Rank::S => "s",
+            Rank::AA => "aa",
+            Rank::A => "a",
+            Rank::B => "b",
+            Rank::C => "c",
+        }
+    }
+}
+
+impl Display for Rank {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for Rank {
+    type Err = UnknownRank;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "x" => Ok(Rank::X),
+            "ss" => Ok(Rank::SS),
+            "s" => Ok(Rank::S),
+            "aa" => Ok(Rank::AA),
+            "a" => Ok(Rank::A),
+            "b" => Ok(Rank::B),
+            "c" => Ok(Rank::C),
+            s => Err(UnknownRank(s.to_string())),
+        }
+    }
+}
+
+impl TryFrom<String> for Rank {
+    type Error = UnknownRank;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse::<Rank>()
+    }
+}
+
 /// An error for unknown flags.
 #[derive(Debug, Display)]
 #[display("unknown flag: \"{_0}\"")]
 pub struct UnknownFlag(String);
+
+impl std::error::Error for UnknownFlag {}
+
+/// A rank name was not recognized.
+#[derive(Debug, Display)]
+#[display("unknown rank: \"{_0}\"")]
+pub struct UnknownRank(String);
+
+impl std::error::Error for UnknownRank {}

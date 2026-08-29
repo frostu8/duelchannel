@@ -6,7 +6,11 @@ use std::cmp::max;
 
 use chrono::{DateTime, Utc};
 
-use duelchannel_model::{CurrentUser, Profile, Rrid, User, user::UserFlags};
+use derive_more::{Display, From};
+use duelchannel_model::{
+    CurrentUser, Profile, Rrid, User,
+    user::{Rank, UnknownRank, UserFlags},
+};
 use sea_query::{Expr, ExprTrait as _, Iden, JoinType, Query, SqliteQueryBuilder};
 use sea_query_sqlx::SqlxBinder as _;
 
@@ -26,6 +30,7 @@ pub struct UserEntity {
     pub ordinal: Option<f32>,
     pub hide_rating: bool,
     pub matches_until_rated: i32,
+    pub rank: Option<String>,
     pub inserted_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 
@@ -67,7 +72,7 @@ impl UserEntity {
 }
 
 impl TryFrom<UserEntity> for CurrentUser {
-    type Error = MissingData;
+    type Error = NormalizeError;
 
     fn try_from(value: UserEntity) -> Result<Self, Self::Error> {
         Ok(CurrentUser {
@@ -77,13 +82,20 @@ impl TryFrom<UserEntity> for CurrentUser {
 }
 
 impl TryFrom<UserEntity> for User {
-    type Error = MissingData;
+    type Error = NormalizeError;
 
     fn try_from(value: UserEntity) -> Result<Self, Self::Error> {
-        // DR is hidden while the player is still calibrating
+        // DR and rank are hidden while the player is still calibrating
         let dr = match value.ordinal {
             Some(dr) if value.matches_until_rated <= 0 => Some(Some(dr)),
             Some(_dr) => Some(None),
+            None => None,
+        };
+
+        let rank = value.rank.map(|v| v.parse::<Rank>()).transpose()?;
+        let rank = match value.ordinal {
+            Some(_) if value.matches_until_rated <= 0 => Some(rank),
+            Some(_) => Some(None),
             None => None,
         };
 
@@ -97,6 +109,7 @@ impl TryFrom<UserEntity> for User {
             display_name: value.display_name,
             avatar_url: value.avatar_url,
             dr,
+            rank,
             matches_until_rated: match value.ordinal {
                 Some(_) => Some(max(value.matches_until_rated, 0) as u32),
                 None => None,
@@ -304,8 +317,13 @@ enum Table {
 }
 
 /// Update ratings of all users passed to the function.
-pub async fn update_ratings<T>(
-    user_ids: &[i32],
+///
+/// This *does* reassign a player's rank and grant them awards. Should be
+/// called after a battle finishes. The caller is expected to know who won
+/// each battle; outcomes feed rank promotions (on win) and demotions (on
+/// loss).
+pub async fn update_post_battle<T>(
+    entries: &[(i32, bool)],
     model: &T,
     config: &Config,
     conn: &mut SqliteConnection,
@@ -318,19 +336,26 @@ where
         id: i32,
         #[sqlx(try_from = "i32")]
         flags: UserFlags,
+        rank: Option<String>,
     }
+
+    let user_ids = entries
+        .iter()
+        .map(|(user_id, _)| *user_id)
+        .collect::<Vec<_>>();
 
     // Fetch players
     let (query, values) = Query::select()
         .column((Table::User, "id"))
         .column((Table::User, "flags"))
+        .column((Table::User, "rank"))
         .from(Table::User)
         .join(
             JoinType::Join,
             Table::Participant,
             Expr::col((Table::User, "id")).equals((Table::Participant, "user_id")),
         )
-        .and_where(Expr::col((Table::User, "id")).is_in(user_ids))
+        .and_where(Expr::col((Table::User, "id")).is_in(user_ids.iter().copied()))
         .build_sqlx(SqliteQueryBuilder);
 
     let players = sqlx::query_as_with::<_, UserRow, _>(sqlx::AssertSqlSafe(query), values)
@@ -339,15 +364,14 @@ where
         .into_iter()
         .collect::<Vec<_>>();
 
-    // Only update if there was more than 1 participant
-    if players.len() == 0 {
-        return Ok(());
-    }
-
     let ratings = mmr::update_ratings(&user_ids, model, &mut *conn).await?;
 
-    // Grant awards
-    for (player, rating) in players.into_iter().zip(ratings) {
+    // Grant awards, update rank
+    for ((player, rating), (_, no_contest)) in players
+        .into_iter()
+        .zip(ratings)
+        .zip(entries.iter().copied())
+    {
         let mut flags = player.flags;
         let awards = config
             .awards
@@ -358,6 +382,44 @@ where
         // Award these guys
         for award in awards {
             flags |= award.flag;
+        }
+
+        // Rank update; only move up on win or down on loss.
+        // Players without a rank get a fresh one if they are ranked
+        let old_rank = player
+            .rank
+            .map(|r| r.parse::<Rank>())
+            .transpose()
+            .map_err(|e| Error::new(e).with_message("failed to parse rank from db"))?;
+        let new_rank = config.classify_rank(rating.ordinal());
+
+        let rank_update = match (old_rank, new_rank) {
+            (None, fresh) if rating.matches_until_rated == 0 => fresh,
+            (None, _) => None,
+            (Some(old), Some(new)) if new > old && !no_contest => Some(new),
+            (Some(old), Some(new)) if new < old && no_contest => Some(new),
+            (Some(_), _) => None,
+        };
+
+        let mut query = Query::update();
+        query
+            .table(Table::User)
+            .value("updated_at", Utc::now())
+            .and_where(Expr::col((Table::User, "id")).eq(player.id));
+
+        if let Some(rank) = rank_update {
+            sqlx::query(
+                r#"
+                    UPDATE user
+                    SET updated_at = $2, rank = $3
+                    WHERE id = $1
+                    "#,
+            )
+            .bind(player.id)
+            .bind(Utc::now())
+            .bind(rank.to_string())
+            .execute(&mut *conn)
+            .await?;
         }
 
         // Only update if the player's flags actually changed
@@ -394,5 +456,22 @@ impl From<ProfileEntity> for Profile {
         Profile {
             public_key: value.public_key,
         }
+    }
+}
+
+/// An error for parsing a user as a model type.
+#[derive(Debug, Display, From)]
+pub enum NormalizeError {
+    #[display("{_0}")]
+    MissingData(MissingData),
+    #[display("stored rank is malformed: {_0}")]
+    UnknownRank(UnknownRank),
+}
+
+impl std::error::Error for NormalizeError {}
+
+impl From<NormalizeError> for Error {
+    fn from(value: NormalizeError) -> Self {
+        Error::new(value)
     }
 }

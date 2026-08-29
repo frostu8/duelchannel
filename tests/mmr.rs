@@ -1,6 +1,7 @@
 //! Integration tests for the skill-rating (MMR) entity layer.
 
 use chrono::{DateTime, TimeDelta, Utc};
+use duelchannel::config::Config;
 use duelchannel::entity::user::mmr::{get_rating, init_rating_at, update_ratings_at};
 use duelchannel::mmr::RatingModel;
 use duelchannel::mmr::glicko2::{Glicko2, Glicko2Config};
@@ -140,14 +141,15 @@ async fn update_ordinal_after_win() {
     let mut conn = pool.acquire().await.unwrap();
     let model = Glicko2::new(Glicko2Config::default());
     let t0 = epoch();
+    let config = Config::default();
 
     let winner = insert_user(&pool, "WNR123", "winner").await;
     let loser = insert_user(&pool, "LSR456", "loser").await;
 
-    init_rating_at(winner, t0, &model, &mut conn)
+    init_rating_at(winner, t0, &config, &model, &mut conn)
         .await
         .expect("init winner");
-    init_rating_at(loser, t0, &model, &mut conn)
+    init_rating_at(loser, t0, &config, &model, &mut conn)
         .await
         .expect("init loser");
 
@@ -187,14 +189,15 @@ async fn rollover_creates_new_period_and_catalogs_it() {
     let mut conn = pool.acquire().await.unwrap();
     let model = Glicko2::new(Glicko2Config::default());
     let t0 = epoch();
+    let config = Config::default();
 
     let winner = insert_user(&pool, "WNR123", "winner").await;
     let loser = insert_user(&pool, "LSR456", "loser").await;
 
-    init_rating_at(winner, t0, &model, &mut conn)
+    init_rating_at(winner, t0, &config, &model, &mut conn)
         .await
         .expect("init winner");
-    init_rating_at(loser, t0, &model, &mut conn)
+    init_rating_at(loser, t0, &config, &model, &mut conn)
         .await
         .expect("init loser");
 
@@ -242,13 +245,14 @@ async fn idle_player_decays_through_closed_periods() {
     cfg.decay_grace = cfg.period * 2;
     let model = Glicko2::new(cfg);
     let t0 = epoch();
+    let config = Config::default();
 
     let winner = insert_user(&pool, "WNR123", "winner").await;
     let loser = insert_user(&pool, "LSR456", "loser").await;
     let idler = insert_user(&pool, "IDL789", "idler").await;
 
     for u in [winner, loser, idler] {
-        init_rating_at(u, t0, &model, &mut conn)
+        init_rating_at(u, t0, &config, &model, &mut conn)
             .await
             .expect("init");
     }
@@ -319,14 +323,15 @@ async fn unexpected_dr_drops() {
     let cfg = Glicko2Config::default();
     let model = Glicko2::new(cfg.clone());
     let t0 = epoch();
+    let config = Config::default();
 
     let winner = insert_user(&pool, "WNR123", "winner").await;
     let loser = insert_user(&pool, "LSR456", "loser").await;
 
-    init_rating_at(winner, t0, &model, &mut conn)
+    init_rating_at(winner, t0, &config, &model, &mut conn)
         .await
         .expect("init winner");
-    init_rating_at(loser, t0, &model, &mut conn)
+    init_rating_at(loser, t0, &config, &model, &mut conn)
         .await
         .expect("init loser");
 

@@ -444,11 +444,11 @@ where
         let participants = battle.participants.as_ref().expect("preloaded");
         let user_ids = participants
             .into_iter()
-            .map(|p| p.user_id)
+            .map(|p| (p.user_id, p.no_contest))
             .collect::<Vec<_>>();
 
         model
-            .update_ratings(user_ids.as_slice(), &state.config, &mut *tx)
+            .update_post_battle(user_ids.as_slice(), &state.config, &mut *tx)
             .await?;
     }
 

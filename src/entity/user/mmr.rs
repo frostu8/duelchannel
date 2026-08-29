@@ -50,9 +50,19 @@ pub trait RatingService: Send + Sync {
     ) -> impl Future<Output = Result<Option<(f32, u32)>, Error>> + Send;
 
     /// Updates the ratings of a list of users.
-    fn update_ratings(
+    fn update_cached_ratings(
         &self,
         user_ids: &[i32],
+        conn: &mut SqliteConnection,
+    ) -> impl Future<Output = Result<(), Error>> + Send;
+
+    /// Updates the ratings of a list of users after the completion of a
+    /// battle.
+    ///
+    /// rank promotions and award grants.
+    fn update_post_battle(
+        &self,
+        entries: &[(i32, bool)],
         config: &Config,
         conn: &mut SqliteConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send;
@@ -105,13 +115,21 @@ where
             .map(Some)
     }
 
-    async fn update_ratings(
+    async fn update_cached_ratings(
         &self,
         user_ids: &[i32],
+        conn: &mut SqliteConnection,
+    ) -> Result<(), Error> {
+        update_ratings(user_ids, self, conn).await.map(|_| ())
+    }
+
+    async fn update_post_battle(
+        &self,
+        user_ids: &[(i32, bool)],
         config: &Config,
         conn: &mut SqliteConnection,
     ) -> Result<(), Error> {
-        super::update_ratings(user_ids, self, config, conn).await
+        super::update_post_battle(user_ids, self, config, conn).await
     }
 
     async fn quality_1v1(
@@ -166,9 +184,17 @@ impl RatingService for Unrated {
         ready(Ok(None))
     }
 
-    fn update_ratings(
+    fn update_cached_ratings(
         &self,
         _user_ids: &[i32],
+        _conn: &mut SqliteConnection,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        ready(Ok(()))
+    }
+
+    fn update_post_battle(
+        &self,
+        _user_ids: &[(i32, bool)],
         _config: &Config,
         _conn: &mut SqliteConnection,
     ) -> impl Future<Output = Result<(), Error>> + Send {
@@ -465,11 +491,32 @@ where
     .map_err(Error::from)
 }
 
+/// A result returned by [`update_ratings_at`].
+#[derive(Clone, Debug, Deref, DerefMut)]
+pub struct UpdateRatingResult<T> {
+    /// The updated rating.
+    #[deref]
+    #[deref_mut]
+    pub rating: Rating<T>,
+    /// How many more matches need to be played by the player until they are
+    /// rated.
+    pub matches_until_rated: u32,
+}
+
+impl<T> UpdateRatingResult<T> {
+    pub fn into_inner(self) -> Rating<T> {
+        self.rating
+    }
+}
+
+/// Updates player's ratings.
+///
+/// See [`update_ratings_at`] for more information.
 pub async fn update_ratings<T>(
     user_ids: &[i32],
     model: &T,
     conn: &mut SqliteConnection,
-) -> Result<Vec<Rating<T::Data>>, Error>
+) -> Result<Vec<UpdateRatingResult<T::Data>>, Error>
 where
     T: RatingModel,
 {
@@ -490,10 +537,15 @@ pub async fn update_ratings_at<T>(
     model: &T,
     time: DateTime<Utc>,
     conn: &mut SqliteConnection,
-) -> Result<Vec<Rating<T::Data>>, Error>
+) -> Result<Vec<UpdateRatingResult<T::Data>>, Error>
 where
     T: RatingModel,
 {
+    // Do nothing if there are no user ids
+    if user_ids.len() == 0 {
+        return Ok(Vec::new());
+    }
+
     let mut ratings = Vec::with_capacity(user_ids.len());
 
     let mut min_period: Option<RatingPeriodEntity> = None;
@@ -658,11 +710,14 @@ where
 
     Ok(ratings
         .into_iter()
-        .map(|r| Rating {
-            user_id: r.user_id,
-            rating: r.rating,
-            deviation: r.deviation,
-            extra: r.extra,
+        .map(|r| UpdateRatingResult {
+            rating: Rating {
+                user_id: r.user_id,
+                rating: r.rating,
+                deviation: r.deviation,
+                extra: r.extra,
+            },
+            matches_until_rated: r.matches_until_rated as u32,
         })
         .collect())
 }

@@ -171,7 +171,7 @@ where
     .collect::<Vec<_>>();
 
     model
-        .update_ratings(user_ids.as_slice(), &state.config, &mut *tx)
+        .update_cached_ratings(user_ids.as_slice(), &mut *tx)
         .await?;
 
     let mut out = Vec::with_capacity(user_ids.len());
@@ -208,9 +208,7 @@ where
 {
     let mut tx = state.db.begin().await?;
 
-    model
-        .update_ratings(&[user.id], &state.config, &mut *tx)
-        .await?;
+    model.update_cached_ratings(&[user.id], &mut *tx).await?;
 
     let mut user = get_user(user.id, &mut *tx).await?.expect("valid_user");
     user.preload_statistics(&mut *tx).await?;
@@ -262,9 +260,7 @@ where
         )));
     };
 
-    model
-        .update_ratings(&[user_id], &state.config, &mut *tx)
-        .await?;
+    model.update_cached_ratings(&[user_id], &mut *tx).await?;
 
     let mut user = get_user(user_id, &mut *tx).await?.expect("valid_user");
     user.preload_statistics(&mut *tx).await?;

@@ -21,3 +21,16 @@ port = 4000
 
 [awards.beta_challenger]
 threshold = 16300
+
+[rank.x]
+threshold = 22300
+[rank.ss]
+threshold = 19000
+[rank.s]
+threshold = 16300
+[rank.aa]
+threshold = 14000
+[rank.a]
+threshold = 11200
+[rank.b]
+threshold = 8300
