@@ -14,7 +14,7 @@ use duelchannel_model::{
 
 use rand::{RngExt as _, SeedableRng as _, rngs::StdRng};
 use sea_query::{
-    Asterisk, Expr, ExprTrait, Iden, JoinType, Query, SelectStatement, SqliteQueryBuilder,
+    Asterisk, Expr, ExprTrait, Iden, JoinType, Order, Query, SelectStatement, SqliteQueryBuilder,
 };
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{FromRow, Row as _, SqliteConnection, sqlite::SqliteRow};
@@ -221,6 +221,120 @@ impl BattleBuilder {
     }
 }
 
+/// A battle query.
+///
+/// Used to fetch a list of matches.
+#[derive(Clone, Debug)]
+pub struct BattleQuery {
+    count: u64,
+    before: Option<DateTime<Utc>>,
+    after: Option<DateTime<Utc>>,
+    status: Option<BattleStatus>,
+    level_id: Option<String>,
+    user_id: Option<String>,
+}
+
+impl Default for BattleQuery {
+    fn default() -> Self {
+        BattleQuery {
+            count: 20,
+            before: None,
+            after: None,
+            status: None,
+            level_id: None,
+            user_id: None,
+        }
+    }
+}
+
+impl BattleQuery {
+    /// Creates a new `BattleQuery`.
+    pub fn new() -> BattleQuery {
+        BattleQuery::default()
+    }
+
+    /// How many matches the query should return.
+    pub fn count(&mut self, count: u64) -> &mut Self {
+        self.count = count;
+        self
+    }
+
+    /// Get matches only inserted before this time.
+    pub fn before(&mut self, before: DateTime<Utc>) -> &mut Self {
+        self.before = Some(before);
+        self
+    }
+
+    /// Get matches only inserted after this time.
+    pub fn after(&mut self, after: DateTime<Utc>) -> &mut Self {
+        self.after = Some(after);
+        self
+    }
+
+    /// Filter by match status.
+    pub fn status(&mut self, status: BattleStatus) -> &mut Self {
+        self.status = Some(status);
+        self
+    }
+
+    /// Filter by the id of the level the match was played on.
+    pub fn level_id(&mut self, level_id: String) -> &mut Self {
+        self.level_id = Some(level_id);
+        self
+    }
+
+    /// Filter by participating user.
+    pub fn user_id(&mut self, user_id: String) -> &mut Self {
+        self.user_id = Some(user_id);
+        self
+    }
+
+    /// Gets the results of the query.
+    pub async fn fetch(&self, conn: &mut SqliteConnection) -> Result<Vec<BattleEntity>, Error> {
+        let mut query = Query::select()
+            .column((Table::Battle, Asterisk))
+            .from(Table::Battle)
+            .apply_if(self.status, |q, status| {
+                q.and_where(Expr::col((Table::Battle, "status")).eq(u8::from(status)));
+            })
+            .apply_if(self.level_id.as_ref(), |q, level_id| {
+                q.and_where(Expr::col((Table::Battle, "level_id")).eq(level_id));
+            })
+            .apply_if(self.before, |q, before| {
+                q.and_where(Expr::col((Table::Battle, "inserted_at")).lt(before));
+            })
+            .apply_if(self.after, |q, after| {
+                q.and_where(Expr::col((Table::Battle, "inserted_at")).gt(after));
+            })
+            .order_by((Table::Battle, "inserted_at"), Order::Desc)
+            .limit(self.count)
+            .take();
+
+        // For player filter, we need to join on participants.
+        if let Some(user_id) = self.user_id.as_ref() {
+            query
+                .join(
+                    JoinType::Join,
+                    Table::Participant,
+                    Expr::col((Table::Battle, "id")).equals((Table::Participant, "match_id")),
+                )
+                .join(
+                    JoinType::Join,
+                    Table::User,
+                    Expr::col((Table::Participant, "user_id")).equals((Table::User, "id")),
+                )
+                .and_where(Expr::col((Table::User, "short_id")).eq(user_id));
+        }
+
+        // Fetch results from DB
+        let (query, values) = query.build_sqlx(SqliteQueryBuilder);
+        sqlx::query_as_with::<_, BattleEntity, _>(sqlx::AssertSqlSafe(query), values)
+            .fetch_all(conn)
+            .await
+            .map_err(Error::from)
+    }
+}
+
 /// Gets the replay url of a battle.
 pub fn get_replay_url(battle: &BattleEntity, config: &Config) -> Option<String> {
     battle
@@ -412,6 +526,7 @@ enum Table {
     User,
     Participant,
     Skin,
+    Battle,
 }
 
 fn select_participants() -> SelectStatement {

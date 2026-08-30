@@ -339,7 +339,7 @@ where
             "/players",
             Router::<AppState>::new()
                 .route("/", post(routes::player::create::<T>))
-                .route("/", get(routes::player::list::<T>))
+                .route("/", get(routes::player::list))
                 .route("/~me", get(routes::player::show_self::<T>))
                 .route("/{short_id}", get(routes::player::show::<T>)),
         )

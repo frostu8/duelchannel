@@ -11,7 +11,7 @@ use duelchannel_model::{
     CurrentUser, Profile, Rrid, User,
     user::{Rank, UnknownRank, UserFlags},
 };
-use sea_query::{Expr, ExprTrait as _, Iden, Query, SqliteQueryBuilder};
+use sea_query::{Asterisk, Expr, ExprTrait as _, Iden, Order, Query, SqliteQueryBuilder};
 use sea_query_sqlx::SqlxBinder as _;
 
 use crate::{config::Config, entity::MissingData, error::Error, mmr::RatingModel, short_id};
@@ -125,6 +125,108 @@ impl TryFrom<UserEntity> for User {
                 .profiles
                 .map(|list| list.into_iter().map(Profile::from).collect()),
         })
+    }
+}
+
+/// A query used to fetch users.
+#[derive(Debug, Clone)]
+pub struct UserQuery {
+    count: u64,
+    before: Option<f32>,
+    after: Option<f32>,
+    public_key: Option<Rrid>,
+    search: Option<String>,
+}
+
+impl Default for UserQuery {
+    fn default() -> Self {
+        UserQuery {
+            count: 20,
+            before: None,
+            after: None,
+            public_key: None,
+            search: None,
+        }
+    }
+}
+
+impl UserQuery {
+    /// Creates a new `UserQuery`.
+    pub fn new() -> UserQuery {
+        UserQuery::default()
+    }
+
+    /// Only return this many users.
+    pub fn count(&mut self, count: u64) -> &mut Self {
+        self.count = count;
+        self
+    }
+
+    /// Get users before this ordinal.
+    pub fn before(&mut self, before: f32) -> &mut Self {
+        self.before = Some(before);
+        self
+    }
+
+    /// Get users after this ordinal.
+    pub fn after(&mut self, after: f32) -> &mut Self {
+        self.after = Some(after);
+        self
+    }
+
+    /// Only show the user with this profile.
+    pub fn public_key(&mut self, public_key: Rrid) -> &mut Self {
+        self.public_key = Some(public_key);
+        self
+    }
+
+    /// Search query.
+    pub fn search(&mut self, search: String) -> &mut Self {
+        self.search = Some(search);
+        self
+    }
+
+    pub async fn fetch(&self, conn: &mut SqliteConnection) -> Result<Vec<UserEntity>, Error> {
+        let query = Query::select()
+            .column((Table::User, Asterisk))
+            .from(Table::User)
+            .apply_if(self.before, |q, before| {
+                q.and_where(Expr::col((Table::User, "ordinal")).lt(before));
+            })
+            .apply_if(self.after, |q, after| {
+                q.and_where(Expr::col((Table::User, "ordinal")).gt(after));
+            })
+            .apply_if(self.public_key.clone(), |q, public_key| {
+                let subq = Query::select()
+                    .column((Table::Profile, "public_key"))
+                    .from(Table::Profile)
+                    .and_where(Expr::col((Table::Profile, "parent_id")).equals((Table::User, "id")))
+                    .and_where(Expr::col((Table::Profile, "public_key")).eq(public_key.as_bytes()))
+                    .take();
+
+                q.and_where(Expr::exists(subq));
+            })
+            .apply_if(self.search.as_ref(), |q, search| {
+                // Escape LIKE control characters
+                let escaped_search = search
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_");
+
+                let pattern = format!("%{}%", escaped_search);
+
+                q.and_where(Expr::col((Table::User, "display_name")).like(pattern));
+            })
+            .order_by((Table::User, "matches_until_rated"), Order::Asc)
+            .order_by((Table::User, "ordinal"), Order::Desc)
+            .limit(self.count)
+            .take();
+
+        let (query, values) = query.build_sqlx(SqliteQueryBuilder);
+        sqlx::query_as_with::<_, UserEntity, _>(sqlx::AssertSqlSafe(query), values)
+            .fetch_all(conn)
+            .await
+            .map_err(Error::from)
     }
 }
 
@@ -313,6 +415,7 @@ pub async fn get_user_by_public_key(
 #[derive(Iden)]
 enum Table {
     User,
+    Profile,
 }
 
 /// Update ratings of all users passed to the function.

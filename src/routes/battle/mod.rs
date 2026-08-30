@@ -41,7 +41,9 @@ use crate::{
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
     entity::{
-        battle::{BattleEntity, analytics::get_analytics, build_battle, get_replay_url},
+        battle::{
+            BattleEntity, BattleQuery, analytics::get_analytics, build_battle, get_replay_url,
+        },
         user::{get_user_by_public_key, mmr::RatingService},
     },
     error::{Error, ErrorKind},
@@ -51,10 +53,11 @@ use crate::{
 /// A query for [`list`].
 #[derive(Deserialize, Debug, Validate, IntoParams)]
 #[garde(context(AppState as state))]
-pub struct ListBattlesQuery {
+#[serde(default)]
+#[into_params(parameter_in = Query)]
+pub struct ListBattlesFilters {
     /// The maximum number of matches to return.
     #[garde(range(min = 1, max = 50))]
-    #[serde(default = "list_battle_count_default")]
     #[param(minimum = 1, maximum = 50, default = 50)]
     pub count: i32,
     /// Only return matches inserted before this time.
@@ -65,10 +68,38 @@ pub struct ListBattlesQuery {
     #[garde(skip)]
     #[param(value_type = String, format = "date-time")]
     pub after: Option<DateTime<Utc>>,
+    /// Filter matches with this status.
+    /// * `0` Ongoing
+    /// * `1` Concluded
+    /// * `2` Cancelled
+    #[garde(skip)]
+    pub status: Option<BattleStatus>,
+    /// Filter matches played on this level.
+    ///
+    /// This will silently fail and return no matches if an invalid ID is
+    /// passed.
+    #[garde(skip)]
+    pub level: Option<String>,
+    /// Filter matches with this player.
+    ///
+    /// This will silently fail and return no matches if an invalid user is
+    /// passed.
+    #[garde(length(min = 6, max = 6))]
+    #[param(min_length = 6, max_length = 6, pattern = "[A-Z0-9]{6}")]
+    pub user: Option<String>,
 }
 
-fn list_battle_count_default() -> i32 {
-    50
+impl Default for ListBattlesFilters {
+    fn default() -> Self {
+        ListBattlesFilters {
+            count: 50,
+            before: None,
+            after: None,
+            status: None,
+            level: None,
+            user: None,
+        }
+    }
 }
 
 /// Lists all matches.
@@ -76,7 +107,7 @@ fn list_battle_count_default() -> i32 {
     get,
     path = "/matches",
     tag = "match",
-    params(ListBattlesQuery),
+    params(ListBattlesFilters),
     responses(
         (status = 200, description = "A list of matches", body = Vec<Battle>),
         (status = 400, description = "Invalid query parameters", body = ApiError),
@@ -85,29 +116,30 @@ fn list_battle_count_default() -> i32 {
 #[instrument(skip(state))]
 pub async fn list(
     State(state): State<AppState>,
-    Valid(Form(query)): Valid<Form<ListBattlesQuery>>,
+    Valid(Form(filters)): Valid<Form<ListBattlesFilters>>,
 ) -> Result<Json<Vec<Battle>>, Error> {
     let mut conn = state.db.acquire().await?;
 
-    let rows = sqlx::query_as::<_, BattleEntity>(
-        r#"
-        SELECT b.*
-        FROM battle b
-        WHERE
-            ($1 IS NULL OR inserted_at < $1)
-            AND ($2 IS NULL OR inserted_at > $2)
-        ORDER BY
-            inserted_at DESC
-        LIMIT $3
-        "#,
-    )
-    .bind(query.before)
-    .bind(query.after)
-    .bind(query.count)
-    .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .collect::<Vec<_>>();
+    let mut query = BattleQuery::new();
+    query.count(filters.count as u64);
+
+    if let Some(before) = filters.before {
+        query.before(before);
+    }
+    if let Some(after) = filters.after {
+        query.after(after);
+    }
+    if let Some(status) = filters.status {
+        query.status(status);
+    }
+    if let Some(user_id) = filters.user {
+        query.user_id(user_id);
+    }
+    if let Some(level_id) = filters.level {
+        query.level_id(level_id);
+    }
+
+    let rows = query.fetch(&mut *conn).await?;
 
     // Preload all battles
     let mut battles = Vec::with_capacity(rows.len());

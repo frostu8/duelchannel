@@ -19,7 +19,7 @@ use crate::{
     app::AppState,
     auth::api_key::ServerAuthentication,
     body::{Form, Json, Payload},
-    entity::user::{build_user, get_user, mmr::RatingService},
+    entity::user::{UserQuery, build_user, get_user, mmr::RatingService},
     error::{Error, ErrorKind},
     session::SessionUser,
     validate::Valid,
@@ -29,7 +29,8 @@ use crate::{
 #[derive(Deserialize, Debug, Validate, IntoParams)]
 #[serde(default)]
 #[garde(context(AppState as state))]
-pub struct ListUsersQuery {
+#[into_params(parameter_in = Query)]
+pub struct ListUsersFilters {
     /// The maximum number of users to return.
     #[garde(range(min = 1, max = 50))]
     #[param(minimum = 1, maximum = 50, default = 20)]
@@ -38,13 +39,26 @@ pub struct ListUsersQuery {
     #[garde(skip)]
     #[param(value_type = String)]
     pub public_key: Option<Rrid>,
+    /// Filter users that have a lower ordinal than `before`.
+    #[garde(skip)]
+    pub before: Option<f32>,
+    /// Filter users that have a higher ordinal than `after`.
+    #[garde(skip)]
+    pub after: Option<f32>,
+    /// A search term for users.
+    #[garde(length(min = 1))]
+    #[param(min_length = 1)]
+    pub search: Option<String>,
 }
 
-impl Default for ListUsersQuery {
+impl Default for ListUsersFilters {
     fn default() -> Self {
-        ListUsersQuery {
+        ListUsersFilters {
             count: 20,
             public_key: None,
+            before: None,
+            after: None,
+            search: None,
         }
     }
 }
@@ -133,58 +147,50 @@ where
     get,
     path = "/players",
     tag = "player",
-    params(ListUsersQuery),
+    params(ListUsersFilters),
     responses(
         (status = 200, description = "A list of users", body = Vec<User>),
         (status = 400, description = "Invalid query parameters", body = ApiError),
     ),
 )]
-pub async fn list<T>(
+pub async fn list(
     State(state): State<AppState>,
-    Extension(model): Extension<T>,
-    Valid(Form(query)): Valid<Form<ListUsersQuery>>,
-) -> Result<Json<Vec<User>>, Error>
-where
-    T: RatingService,
-{
-    let mut tx = state.db.begin().await?;
+    Valid(Form(filters)): Valid<Form<ListUsersFilters>>,
+) -> Result<Json<Vec<User>>, Error> {
+    let mut conn = state.db.acquire().await?;
 
-    let user_ids = sqlx::query_as::<_, (i32,)>(
-        r#"
-        SELECT u.id
-        FROM user u, profile p
-        WHERE
-            p.parent_id = u.id
-            AND ($2 IS NULL OR p.public_key = $2)
-        ORDER BY
-            matches_until_rated ASC,
-            ordinal DESC
-        LIMIT $1
-        "#,
-    )
-    .bind(query.count)
-    .bind(query.public_key.as_ref().map(|s| s.as_bytes()))
-    .fetch_all(&mut *tx)
-    .await?
-    .into_iter()
-    .map(|(id,)| id)
-    .collect::<Vec<_>>();
+    let mut query = UserQuery::new();
 
-    model
-        .update_cached_ratings(user_ids.as_slice(), &mut *tx)
-        .await?;
-
-    let mut out = Vec::with_capacity(user_ids.len());
-    for user_id in user_ids {
-        let mut user = get_user(user_id, &mut *tx).await?.expect("valid user");
-        user.preload_statistics(&mut *tx).await?;
-
-        out.push(User::try_from(user)?);
+    if let Some(before) = filters.before {
+        query.before(before);
+    }
+    if let Some(after) = filters.after {
+        query.after(after);
+    }
+    if let Some(search) = filters.search {
+        query.search(search);
+    }
+    if let Some(public_key) = filters.public_key {
+        query.public_key(public_key);
     }
 
-    tx.commit().await?;
+    // This is a bit too aggressive for updating ratings. This route should be
+    // idempotent.
+    // model
+    //     .update_cached_ratings(user_ids.as_slice(), &mut *tx)
+    //     .await?;
 
-    Ok(Json(out))
+    let mut users = query.fetch(&mut conn).await?;
+    for user in users.iter_mut() {
+        user.preload_statistics(&mut conn).await?;
+    }
+
+    Ok(Json(
+        users
+            .into_iter()
+            .map(|u| User::try_from(u).map_err(Error::from))
+            .collect::<Result<Vec<_>, Error>>()?,
+    ))
 }
 
 /// Shows the currently authenticated user's details.
