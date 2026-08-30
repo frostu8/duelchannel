@@ -299,6 +299,7 @@ where
             name: input_player.name,
             team: input_player.team,
             finish_time: None,
+            score: 0,
             no_contest: false,
             skin: input_player.skin,
             skin_color: input_player.skin_color,

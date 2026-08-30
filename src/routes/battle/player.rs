@@ -87,6 +87,9 @@ pub async fn update(
     if let Some(finish_time) = request.finish_time {
         participant.finish_time = Some(finish_time);
     }
+    if let Some(score) = request.score {
+        participant.score = score;
+    }
     if let Some(roulette) = request.roulette {
         // Append roulette
         participant.extend_roulette(roulette, &mut *tx).await?;
@@ -99,13 +102,15 @@ pub async fn update(
     let res = sqlx::query(
         r#"
         UPDATE participant
-        SET finish_time = IFNULL($3, finish_time)
+        SET finish_time = IFNULL($3, finish_time),
+            score = IFNULL($4, score)
         WHERE id = $1 AND match_id = $2
         "#,
     )
     .bind(participant.id)
     .bind(battle_id)
     .bind(request.finish_time)
+    .bind(request.score)
     .execute(&mut *tx)
     .await?;
 

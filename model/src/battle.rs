@@ -53,6 +53,10 @@ pub struct Participant {
     /// The player's finish time, if they finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finish_time: Option<i32>,
+    /// The player's score.
+    ///
+    /// For duels, this is how many checkpoints the player crossed.
+    pub score: i32,
     /// If the player no contest'd.
     #[serde(default)]
     pub no_contest: bool,

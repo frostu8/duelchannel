@@ -261,6 +261,7 @@ pub struct ParticipantEntity {
     #[sqlx(try_from = "u8")]
     pub team: PlayerTeam,
     pub finish_time: Option<i32>,
+    pub score: i32,
     pub no_contest: bool,
     pub skin_color: Option<String>,
 
@@ -348,6 +349,7 @@ impl TryFrom<ParticipantEntity> for Participant {
             name: value.name,
             team: value.team,
             finish_time: value.finish_time,
+            score: value.score,
             no_contest: value.no_contest,
             skin: value.skin.into(),
             skin_color: value.skin_color,
