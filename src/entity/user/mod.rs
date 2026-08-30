@@ -59,7 +59,7 @@ impl UserEntity {
             r#"
             SELECT *
             FROM profile
-            WHERE p.parent_id = $1
+            WHERE parent_id = $1
             "#,
         )
         .bind(self.id)
@@ -532,7 +532,7 @@ where
 pub struct ProfileEntity {
     pub id: i32,
     pub parent_id: i32,
-    #[sqlx(try_from = "String")]
+    #[sqlx(try_from = "Vec<u8>")]
     pub public_key: Rrid,
 }
 

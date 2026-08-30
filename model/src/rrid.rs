@@ -101,6 +101,28 @@ impl TryFrom<&str> for Rrid {
     }
 }
 
+impl TryFrom<&[u8]> for Rrid {
+    type Error = RridFromBytesError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        if value.len() != 32 {
+            return Err(RridFromBytesError::InvalidLength { len: value.len() });
+        }
+
+        let mut buf = [0u8; PUBKEYLENGTH];
+        buf.copy_from_slice(value);
+        Ok(Rrid(buf))
+    }
+}
+
+impl TryFrom<Vec<u8>> for Rrid {
+    type Error = RridFromBytesError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        value.as_slice().try_into()
+    }
+}
+
 impl FromStr for Rrid {
     type Err = RridParseError;
 
@@ -177,5 +199,15 @@ pub enum RridParseError {
     InvalidChar {
         #[error(not(source))]
         valid_up_to: usize,
+    },
+}
+
+/// An error for getting an [`Rrid`] from bytes.
+#[derive(Debug, Display, Error)]
+pub enum RridFromBytesError {
+    #[display("buf was len {len}, expected len {PUBKEYLENGTH}")]
+    InvalidLength {
+        #[error(not(source))]
+        len: usize,
     },
 }

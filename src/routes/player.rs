@@ -268,10 +268,10 @@ where
 
     model.update_cached_ratings(&[user_id], &mut *tx).await?;
 
-    let mut user = get_user(user_id, &mut *tx).await?.expect("valid_user");
+    let mut user = get_user(user_id, &mut *tx).await?.expect("valid user");
     user.preload_statistics(&mut *tx).await?;
-    // The authenticated user can see their profiles
-    user.preload_profiles(&mut *tx).await?;
+    // NO! BAD. DO NOT EXPOSE THIS OVER PUBLIC API.
+    //user.preload_profiles(&mut *tx).await?;
 
     tx.commit().await?;
 
