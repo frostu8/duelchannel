@@ -62,8 +62,8 @@ async fn insert_user(pool: &SqlitePool, short: &str, name: &str) -> i32 {
 async fn insert_battle(pool: &SqlitePool, winner: i32, loser: i32, at: chrono::DateTime<Utc>) {
     let res = sqlx::query(
         r#"
-        INSERT INTO battle (uuid, level_name, status, concluded_at, inserted_at, updated_at)
-        VALUES ($1, 'map', 1, $2, $3, $3)
+        INSERT INTO battle (uuid, level_name, level_id, status, concluded_at, inserted_at, updated_at)
+        VALUES ($1, 'map', 'RR_MAP', 1, $2, $3, $3)
         "#,
     )
     .bind(uuid::Uuid::new_v4().to_string())
@@ -373,6 +373,9 @@ async fn unexpected_dr_drops() {
             new_loser_ordinal
         );
 
+        println!("winner delta: {}", new_winner_ordinal - winner_ordinal);
+        println!("loser delta: {}", new_loser_ordinal - loser_ordinal);
+
         winner_ordinal = new_winner_ordinal;
         loser_ordinal = new_loser_ordinal;
 
@@ -381,6 +384,8 @@ async fn unexpected_dr_drops() {
 
     let pc = period_count(&pool).await;
     assert_eq!(pc, 1, "rollover shouldn't happen yet");
+
+    println!("rollover here");
 
     // Add another battle
     let t1 = t0 + cfg.period;
@@ -400,6 +405,9 @@ async fn unexpected_dr_drops() {
 
     let new_winner_ordinal = user_ordinal(&pool, winner).await;
     let new_loser_ordinal = user_ordinal(&pool, loser).await;
+
+    println!("winner delta: {}", new_winner_ordinal - winner_ordinal);
+    println!("loser delta: {}", new_loser_ordinal - loser_ordinal);
 
     assert!(
         new_winner_ordinal > winner_ordinal,
@@ -432,6 +440,9 @@ async fn unexpected_dr_drops() {
 
     let new_winner_ordinal = user_ordinal(&pool, winner).await;
     let new_loser_ordinal = user_ordinal(&pool, loser).await;
+
+    println!("winner delta: {}", new_winner_ordinal - winner_ordinal);
+    println!("loser delta: {}", new_loser_ordinal - loser_ordinal);
 
     assert!(
         new_winner_ordinal > winner_ordinal,

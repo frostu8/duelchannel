@@ -37,6 +37,7 @@ impl From<BattleStatistics> for duelchannel_model::battle::BattleStatistics {
 struct BattlePointRow {
     pub uuid: String,
     pub level_name: String,
+    pub level_id: String,
     pub margin_score: Option<i32>,
     #[sqlx(flatten)]
     pub statistics: BattleStatistics,
@@ -47,6 +48,7 @@ impl From<BattlePointRow> for BattlePoint {
         BattlePoint {
             id: value.uuid,
             level_name: value.level_name,
+            level_id: value.level_id,
             margin_score: value.margin_score,
             statistics: value.statistics.into(),
         }
@@ -59,7 +61,7 @@ pub fn stream_analytics(
 ) -> impl Stream<Item = Result<BattlePoint, Error>> {
     sqlx::query_as::<_, BattlePointRow>(
         r#"
-        SELECT bs.*, b.uuid, b.level_name, b.margin_score
+        SELECT bs.*, b.uuid, b.level_name, b.level_id, b.margin_score
         FROM battle_statistics bs, battle b
         WHERE b.id = bs.match_id
         "#,

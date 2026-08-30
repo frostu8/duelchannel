@@ -26,6 +26,8 @@ pub struct Battle {
     pub id: String,
     /// The level name the match played on.
     pub level_name: String,
+    /// The level's internal identifier (the map lumpname, e.g. `RR_AUTUMNRING`).
+    pub level_id: String,
     /// The status of the match.
     pub status: BattleStatus,
     /// The margin score of the match.
@@ -266,6 +268,8 @@ pub struct BattlePoint {
     pub id: String,
     /// The name of the level the battle took place on.
     pub level_name: String,
+    /// The level's internal identifier.
+    pub level_id: String,
     /// The margin score of the battle.
     pub margin_score: Option<i32>,
     /// The statistics of the battle.

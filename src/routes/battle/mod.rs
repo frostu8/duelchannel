@@ -220,7 +220,7 @@ where
     let now = Utc::now();
 
     // Create the battle
-    let battle = build_battle(request.level_name)
+    let battle = build_battle(request.level_name, request.level_id)
         .server_id(server_auth.id)
         .timestamp(now)
         .create(&mut *tx)

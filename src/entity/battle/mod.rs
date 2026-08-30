@@ -40,6 +40,7 @@ pub struct BattleEntity {
     #[sqlx(try_from = "String")]
     pub uuid: Uuid,
     pub level_name: String,
+    pub level_id: String,
     #[sqlx(try_from = "u8")]
     pub status: BattleStatus,
     pub margin_score: i32,
@@ -88,6 +89,7 @@ impl TryFrom<BattleEntity> for Battle {
         Ok(Battle {
             id: value.uuid.hyphenated().to_string(),
             level_name: value.level_name,
+            level_id: value.level_id,
             participants: value
                 .participants
                 .ok_or_else(|| MissingData::new("participants"))?
@@ -103,8 +105,8 @@ impl TryFrom<BattleEntity> for Battle {
 }
 
 /// Creates a new [`BattleBuilder`].
-pub fn build_battle(level_name: impl Into<String>) -> BattleBuilder {
-    BattleBuilder::new(level_name)
+pub fn build_battle(level_name: impl Into<String>, level_id: impl Into<String>) -> BattleBuilder {
+    BattleBuilder::new(level_name, level_id)
 }
 
 /// A battle builder.
@@ -113,16 +115,18 @@ pub struct BattleBuilder {
     server_id: Option<i32>,
     timestamp: DateTime<Utc>,
     level_name: String,
+    level_id: String,
     status: BattleStatus,
 }
 
 impl BattleBuilder {
     /// Creates a new `BattleBuilder`.
-    pub fn new(level_name: impl Into<String>) -> BattleBuilder {
+    pub fn new(level_name: impl Into<String>, level_id: impl Into<String>) -> BattleBuilder {
         BattleBuilder {
             server_id: None,
             timestamp: Utc::now(),
             level_name: level_name.into(),
+            level_id: level_id.into(),
             status: BattleStatus::Ongoing,
         }
     }
@@ -154,6 +158,7 @@ impl BattleBuilder {
             timestamp,
             server_id,
             level_name,
+            level_id,
             status,
             ..
         } = self;
@@ -170,14 +175,15 @@ impl BattleBuilder {
             // Create the battle
             let res = sqlx::query(
                 r#"
-                INSERT INTO battle (inserted_at, updated_at, server_id, uuid, level_name, status)
-                VALUES ($1, $1, $2, $3, $4, $5)
+                INSERT INTO battle (inserted_at, updated_at, server_id, uuid, level_name, level_id, status)
+                VALUES ($1, $1, $2, $3, $4, $5, $6)
                 "#,
             )
             .bind(timestamp)
             .bind(server_id)
             .bind(uuid.hyphenated().to_string())
             .bind(&level_name)
+            .bind(&level_id)
             .bind(u8::from(status))
             .execute(&mut *conn)
             .await;
@@ -202,6 +208,7 @@ impl BattleBuilder {
             server_id,
             uuid,
             level_name,
+            level_id,
             status,
             margin_score: 0,
             replay_hash: None,

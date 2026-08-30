@@ -14,6 +14,10 @@ use crate::{
 pub struct CreateBattleRequest {
     /// The level the battle is taking place on.
     pub level_name: String,
+    /// The level's internal identifier.
+    ///
+    /// This is the level's lumpname.
+    pub level_id: String,
     /// The players to register for this battle.
     pub participants: Vec<CreateBattleParticipant>,
 }
