@@ -307,7 +307,7 @@ fn soft_floor_phi(new_phi: f32, old_phi: f32, floor: f32) -> f32 {
     }
 
     let resistance = ((old_phi - floor) / old_phi).clamp(0.0, 1.0);
-    (floor + (new_phi - floor) * resistance).max(f32::MIN_POSITIVE)
+    old_phi - (old_phi - new_phi) * resistance
 }
 
 // We can get a rough estimate of what it would like if the player
@@ -517,10 +517,10 @@ mod tests {
         let floor = 60.0;
 
         let reduced = soft_floor_phi(to_phi(150.0), to_phi(200.0), to_phi(floor));
-        assert!((reduced * 173.7178 - 123.0).abs() < 0.5);
+        assert!((reduced * 173.7178 - 165.0).abs() < 0.5);
 
         let near = soft_floor_phi(to_phi(58.0), to_phi(62.0), to_phi(floor));
-        assert!(near * 173.7178 > 59.9 && near * 173.7178 < 60.0);
+        assert!(near * 173.7178 > 61.8 && near * 173.7178 < 62.0);
 
         let up = soft_floor_phi(to_phi(80.0), to_phi(60.0), to_phi(floor));
         assert!((up * 173.7178 - 80.0).abs() < 1e-3);
