@@ -77,7 +77,8 @@ where
         F: for<'a> FnMut(
             &'a str,
             &'a mut SqliteConnection,
-        ) -> Pin<Box<dyn Future<Output = Result<T, sqlx::Error>> + Send + 'a>>,
+        )
+            -> Pin<Box<dyn Future<Output = Result<T, sqlx::Error>> + Send + 'a>>,
         T: Sized,
     {
         let mut inserted_entity = None::<T>;

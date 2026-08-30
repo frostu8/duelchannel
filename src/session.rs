@@ -28,8 +28,8 @@ use tower_sessions::Session as TowerSession;
 
 use crate::{
     app::AppState,
-    error::{Error, ErrorKind},
     entity::user::{UserEntity, get_user},
+    error::{Error, ErrorKind},
 };
 
 pub type SessionError = tower_sessions::session::Error;

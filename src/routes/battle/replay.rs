@@ -17,9 +17,9 @@ use crate::{
     app::AppState,
     auth::api_key::ServerAuthentication,
     body::Json,
+    entity::battle::{BattleEntity, get_replay_url},
     error::{Error, ErrorKind},
     multipart::Multipart,
-    entity::battle::{BattleEntity, get_replay_url},
 };
 
 const MAX_REPLAY_SIZE: usize = 1024 * 1024 * 4;
@@ -51,7 +51,13 @@ pub async fn upload(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<Json<Battle>, Error> {
-    let mut tx = state.db.begin().await.map_err(Error::new)?;
+    // we're trying to nip this in the bud to prevent replays from just being
+    // lost
+    let mut tx = state
+        .db
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(Error::new)?;
 
     // Get associated battle
     let battle = sqlx::query_as::<_, BattleEntity>(

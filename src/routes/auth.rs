@@ -23,8 +23,8 @@ use tracing::instrument;
 
 use crate::{
     auth::oauth2::{OauthState, Session},
-    error::{Error, ErrorKind},
     entity::user::UserBuilder,
+    error::{Error, ErrorKind},
 };
 
 #[derive(FromRow)]

@@ -6,7 +6,7 @@ use duelchannel_model::battle::BattlePoint;
 use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc::unbounded_channel;
 
-use crate::{app::AppState, error::Error, entity::battle::analytics::stream_analytics};
+use crate::{app::AppState, entity::battle::analytics::stream_analytics, error::Error};
 
 /// Fetches analytics about battles.
 ///
