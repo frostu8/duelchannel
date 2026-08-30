@@ -7,6 +7,8 @@ use std::pin::pin;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use duelchannel_model::user::UserFlags;
+use sea_query::{Expr, ExprTrait, Iden, JoinType, Order, Query, SqliteQueryBuilder};
+use sea_query_sqlx::SqlxBinder;
 use tokio::io::AsyncWriteExt;
 
 use crate::config::Config;
@@ -23,6 +25,7 @@ pub struct ReplayOptions {
     pub players: Option<HashSet<String>>,
     /// Whether or not to print the header.
     pub print_header: bool,
+    pub replay_since: Option<DateTime<Utc>>,
     /// Replay up to a certain date-time.
     ///
     /// If `None`, this will replay up to the last battle.
@@ -34,6 +37,7 @@ impl Default for ReplayOptions {
         ReplayOptions {
             players: None,
             print_header: true,
+            replay_since: None,
             replay_to: None,
         }
     }
@@ -258,6 +262,12 @@ where
     }
 }
 
+#[derive(Iden)]
+enum Table {
+    Battle,
+    Participant,
+}
+
 /// Replays MMR calculations for all players.
 ///
 /// This only supports 1v1s as of writing.
@@ -276,26 +286,30 @@ where
 
     // First, list ALL battles played on the local database, sorted by
     // conclusion order.
-    let duel_results = sqlx::query_as::<_, DuelResult>(
-        r#"
-        SELECT
-            b.id AS battle_id,
-            b.concluded_at,
-            p.user_id,
-            p.finish_time,
-            p.no_contest
-        FROM battle b, participant p
-        WHERE
-            p.match_id = b.id
-            AND b.status = 1
-            AND b.concluded_at IS NOT NULL
-        ORDER BY
-            b.concluded_at ASC,
-            b.id ASC
-        "#,
-    )
-    .fetch_all(db)
-    .await?;
+    let (query, values) = Query::select()
+        .expr_as(Expr::col((Table::Battle, "id")), "battle_id")
+        .column((Table::Battle, "concluded_at"))
+        .column((Table::Participant, "user_id"))
+        .column((Table::Participant, "finish_time"))
+        .column((Table::Participant, "no_contest"))
+        .from(Table::Battle)
+        .join(
+            JoinType::Join,
+            Table::Participant,
+            Expr::col((Table::Battle, "id")).equals((Table::Participant, "match_id")),
+        )
+        .and_where(Expr::col((Table::Battle, "status")).eq(1))
+        .and_where(Expr::col((Table::Battle, "concluded_at")).is_not_null())
+        .order_by((Table::Battle, "concluded_at"), Order::Asc)
+        .order_by((Table::Battle, "id"), Order::Asc)
+        .apply_if(options.replay_since, |q, since| {
+            q.and_where(Expr::col((Table::Battle, "concluded_at")).gte(since));
+        })
+        .build_sqlx(SqliteQueryBuilder);
+
+    let duel_results = sqlx::query_as_with::<_, DuelResult, _>(sqlx::AssertSqlSafe(query), values)
+        .fetch_all(db)
+        .await?;
 
     assert!(duel_results.len() > 0, "need at least one duel to replay");
 
@@ -352,6 +366,11 @@ where
         user_order.push(user_id);
     }
 
+    let start_at = options
+        .replay_since
+        .or_else(|| duel_results.iter().next().map(|d| d.concluded_at))
+        .expect("at least one duel");
+
     for duel_result in duel_results {
         let duel = replay_engine
             .duels
@@ -372,7 +391,7 @@ where
 
                     replay_engine
                         .rating_periods
-                        .push(RatingPeriod::new(duel.concluded_at));
+                        .push(RatingPeriod::new(ended_at));
                     (idx, &mut replay_engine.rating_periods[idx])
                 } else {
                     (idx, p)
@@ -382,7 +401,7 @@ where
 
                 replay_engine
                     .rating_periods
-                    .push(RatingPeriod::new(duel.concluded_at));
+                    .push(RatingPeriod::new(start_at));
                 (idx, &mut replay_engine.rating_periods[idx])
             };
 

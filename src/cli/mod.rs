@@ -12,10 +12,11 @@ use std::{
     },
 };
 
-use chrono::Utc;
+use chrono::{DateTime, TimeDelta, Utc};
 
 use clap::{Parser, Subcommand};
 
+use derive_more::{Display, From};
 use eyre::Error;
 
 use sqlx::{FromRow, SqliteConnection, SqlitePool};
@@ -123,6 +124,9 @@ pub struct MmrReset;
 /// Replays the MMR of the server.
 #[derive(clap::Args, Clone, Debug)]
 pub struct MmrReplay {
+    /// Only replay since a specific time.
+    #[arg(short = 'S', long, value_parser = parse_since)]
+    pub since: Option<DateTime<Utc>>,
     /// Only replay for given users.
     #[arg(short, long)]
     pub include: Option<Vec<String>>,
@@ -140,6 +144,7 @@ impl From<MmrReplay> for ReplayOptions {
             players: value.include.map(HashSet::from_iter),
             print_header: if value.no_header { false } else { value.header },
             replay_to: None,
+            replay_since: value.since,
         }
     }
 }
@@ -251,4 +256,37 @@ pub async fn register_server(
     println!("{}", api_key);
 
     Ok(())
+}
+
+#[derive(Debug, Display, From)]
+enum ParseSinceError {
+    #[display("{_0}")]
+    Duration(humantime::DurationError),
+    #[display("{_0}")]
+    Timestamp(chrono::ParseError),
+    #[display("{_0}")]
+    OutOfRange(chrono::OutOfRangeError),
+}
+
+impl std::error::Error for ParseSinceError {}
+
+fn parse_since(s: &str) -> Result<DateTime<Utc>, ParseSinceError> {
+    let s = s.trim();
+    match s.strip_suffix("ago") {
+        Some(ago) => {
+            // Relative time
+            let now = Utc::now();
+
+            let delta = humantime::parse_duration(ago.trim())?;
+            let delta = TimeDelta::from_std(delta)?;
+
+            Ok(now - delta)
+        }
+        None => {
+            // try to parse as timestamp
+            DateTime::parse_from_rfc3339(s)
+                .map(|time| time.to_utc())
+                .map_err(From::from)
+        }
+    }
 }
