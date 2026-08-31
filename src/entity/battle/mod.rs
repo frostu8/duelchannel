@@ -448,14 +448,18 @@ impl TryFrom<ParticipantEntity> for Participant {
     type Error = user::NormalizeError;
 
     fn try_from(value: ParticipantEntity) -> Result<Self, Self::Error> {
+        let user = value.user.ok_or_else(|| MissingData {
+            field_name: String::from("user"),
+        })?;
+
         Ok(Participant {
-            user: value
-                .user
-                .ok_or_else(|| MissingData {
-                    field_name: String::from("user"),
-                })
-                .map_err(user::NormalizeError::from)
-                .and_then(User::try_from)?,
+            // Only show ordinal if the player is not in provisional
+            ordinal: value
+                .ordinal
+                .map(|ordinal| (user.matches_until_rated <= 0).then(|| ordinal)),
+            ordinal_delta: value
+                .ordinal_delta
+                .map(|ordinal_delta| (user.matches_until_rated <= 0).then(|| ordinal_delta)),
             roulette: value
                 .roulette
                 .ok_or_else(|| MissingData {
@@ -469,8 +473,7 @@ impl TryFrom<ParticipantEntity> for Participant {
             no_contest: value.no_contest,
             skin: value.skin.into(),
             skin_color: value.skin_color,
-            ordinal: value.ordinal,
-            ordinal_delta: value.ordinal_delta,
+            user: User::try_from(user).map_err(user::NormalizeError::from)?,
         })
     }
 }

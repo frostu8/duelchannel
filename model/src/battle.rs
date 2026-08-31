@@ -66,14 +66,16 @@ pub struct Participant {
     pub skin_color: Option<String>,
     /// The player's ordinal (DR) at the time of match creation.
     ///
-    /// May be missing for pre-season matches.
+    /// If the player is provisional, this will be `null`. Absent for
+    /// pre-season matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ordinal: Option<f32>,
+    pub ordinal: Option<Option<f32>>,
     /// The change in the player's ordinal (DR) once the match concluded.
     ///
-    /// Absent until the match is rated.
+    /// If the player is proivisonal, this will be `null`. Absent until the
+    /// match is rated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ordinal_delta: Option<f32>,
+    pub ordinal_delta: Option<Option<f32>>,
     /// The item usage of the player in the match.
     pub roulette: Vec<ItemUsage>,
     /// The user participating.
