@@ -406,7 +406,6 @@ where
         return Err(Error::not_found(format!("Match {} not found", uuid)));
     };
 
-    battle.preload_participants(&mut *tx).await?;
     let battle_id = battle.id;
 
     // Verify changes
@@ -443,6 +442,9 @@ where
         // Update base schema value
         battle.status = new_status;
     }
+
+    // Serialize paritcipants; fetch only after
+    battle.preload_participants(&mut *tx).await?;
 
     // Update margin score if it is changed
     if let Some(margin_score) = request.margin_score {
