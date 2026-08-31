@@ -435,13 +435,13 @@ pub struct PostUpdateRating {
     /// The new ordinal of the user.
     pub old_ordinal: f32,
     /// The delta.
-    pub delta: f32,
+    pub ordinal: f32,
 }
 
 impl PostUpdateRating {
-    /// The new ordinal of the user.
-    pub fn ordinal(&self) -> f32 {
-        self.old_ordinal + self.delta
+    /// The delta.
+    pub fn delta(&self) -> f32 {
+        self.ordinal - self.old_ordinal
     }
 }
 
@@ -450,13 +450,10 @@ where
     T: RatingModelData,
 {
     fn from(value: mmr::PostUpdateRating<T>) -> Self {
-        let old_ordinal = value.old_rating.ordinal();
-        let ordinal = value.rating.ordinal();
-
         PostUpdateRating {
             user_id: value.user_id,
-            old_ordinal,
-            delta: ordinal - old_ordinal,
+            old_ordinal: value.old_rating.ordinal(),
+            ordinal: value.rating.ordinal(),
         }
     }
 }

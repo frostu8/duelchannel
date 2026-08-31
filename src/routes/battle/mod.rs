@@ -26,7 +26,7 @@ use http::StatusCode;
 
 use serde::Deserialize;
 
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::{FromRow, SqliteConnection, SqlitePool};
 
 use tracing::instrument;
 
@@ -42,7 +42,8 @@ use crate::{
     body::{Form, Json, Payload},
     entity::{
         battle::{
-            BattleEntity, BattleQuery, analytics::get_analytics, build_battle, get_replay_url,
+            BattleEntity, BattleQuery, analytics::get_analytics, apply_ordinal_deltas,
+            build_battle, get_replay_url,
         },
         user::{get_user_by_public_key, mmr::RatingService},
     },
@@ -248,6 +249,12 @@ pub async fn create<T>(
 where
     T: RatingService + Clone + Send + Sync + 'static,
 {
+    #[derive(Debug, FromRow)]
+    struct UserSeed {
+        pub id: i32,
+        pub ordinal: Option<f32>,
+    }
+
     let mut tx = state.db.begin().await?;
     let now = Utc::now();
 
@@ -275,9 +282,9 @@ where
             return Err(ErrorKind::DuplicateParticipant(input_player.user_id).into());
         }
 
-        let user = sqlx::query_as::<_, (i32,)>(
+        let user = sqlx::query_as::<_, UserSeed>(
             r#"
-            SELECT id
+            SELECT id, ordinal
             FROM user
             WHERE short_id = $1
             "#,
@@ -285,7 +292,12 @@ where
         .bind(&input_player.user_id)
         .fetch_optional(&mut *tx)
         .await?;
-        let Some((user_id,)) = user else {
+
+        let Some(UserSeed {
+            id: user_id,
+            ordinal,
+        }) = user
+        else {
             tx.rollback().await?;
             return Err(ErrorKind::MissingParticipant(input_player.user_id).into());
         };
@@ -304,9 +316,10 @@ where
                 name,
                 team,
                 skin,
-                skin_color
+                skin_color,
+                ordinal
             )
-            SELECT p.id, $2, $3, $4, $5, $6, $7
+            SELECT p.id, $2, $3, $4, $5, $6, $7, $8
             FROM profile p
             WHERE p.public_key = $1
             "#,
@@ -318,6 +331,7 @@ where
         .bind(u8::from(input_player.team))
         .bind(input_player.skin.as_ref().map(|s| &s.name))
         .bind(input_player.skin_color.as_ref())
+        .bind(ordinal)
         .execute(&mut *tx)
         .await?;
 
@@ -335,6 +349,8 @@ where
             no_contest: false,
             skin: input_player.skin,
             skin_color: input_player.skin_color,
+            ordinal,
+            ordinal_delta: None,
         });
     }
 
@@ -482,9 +498,11 @@ where
             .map(|p| (p.user_id, p.no_contest))
             .collect::<Vec<_>>();
 
-        model
+        let deltas = model
             .update_post_battle(user_ids.as_slice(), &state.config, &mut *tx)
             .await?;
+
+        apply_ordinal_deltas(battle.id, deltas.as_slice(), &mut *tx).await?;
     }
 
     // Preload again to get new updates

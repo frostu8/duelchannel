@@ -221,6 +221,7 @@ async fn rollover_creates_new_period_and_catalogs_it() {
 
     let w = get_rating::<Glicko2>(winner, t1, &model, &mut conn)
         .await
+        .unwrap()
         .unwrap();
 
     assert!(
@@ -268,6 +269,7 @@ async fn idle_player_decays_through_closed_periods() {
 
     let idler_row = get_rating::<Glicko2>(idler, t1, &model, &mut conn)
         .await
+        .unwrap()
         .unwrap();
 
     assert!(
@@ -291,6 +293,7 @@ async fn idle_player_decays_through_closed_periods() {
         if i < 2 {
             let idler_row = get_rating::<Glicko2>(idler, time, &model, &mut conn)
                 .await
+                .unwrap()
                 .unwrap();
 
             assert_eq!(
@@ -302,6 +305,7 @@ async fn idle_player_decays_through_closed_periods() {
 
     let idler_row = get_rating::<Glicko2>(idler, time, &model, &mut conn)
         .await
+        .unwrap()
         .unwrap();
 
     assert!(

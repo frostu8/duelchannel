@@ -24,7 +24,7 @@ use crate::{
     config::Config,
     entity::{
         MissingData,
-        user::{self, UserEntity},
+        user::{self, PostUpdateRating, UserEntity},
     },
     error::Error,
     short_id::IdsExhausted,
@@ -378,6 +378,8 @@ pub struct ParticipantEntity {
     pub score: i32,
     pub no_contest: bool,
     pub skin_color: Option<String>,
+    pub ordinal: Option<f32>,
+    pub ordinal_delta: Option<f32>,
 
     #[sqlx(skip)]
     pub user: Option<UserEntity>,
@@ -467,6 +469,8 @@ impl TryFrom<ParticipantEntity> for Participant {
             no_contest: value.no_contest,
             skin: value.skin.into(),
             skin_color: value.skin_color,
+            ordinal: value.ordinal,
+            ordinal_delta: value.ordinal_delta,
         })
     }
 }
@@ -490,6 +494,34 @@ impl From<RouletteEntity> for ItemUsage {
             count: value.count as usize,
         }
     }
+}
+
+/// Stamps the ordinal delta of each participant in a battle.
+pub async fn apply_ordinal_deltas(
+    match_id: i32,
+    deltas: &[PostUpdateRating],
+    conn: &mut SqliteConnection,
+) -> Result<(), Error> {
+    for delta in deltas {
+        sqlx::query(
+            r#"
+            UPDATE participant
+            SET ordinal_delta = $3 - ordinal
+            WHERE
+                match_id = $1
+                AND user_id = $2
+                AND ordinal IS NOT NULL
+                AND ordinal_delta IS NULL
+            "#,
+        )
+        .bind(match_id)
+        .bind(delta.user_id)
+        .bind(delta.ordinal)
+        .execute(&mut *conn)
+        .await?;
+    }
+
+    Ok(())
 }
 
 /// Fetches a single participant by their short_id.
