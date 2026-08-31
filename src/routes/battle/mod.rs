@@ -348,9 +348,8 @@ where
             no_contest: false,
             skin: input_player.skin,
             skin_color: input_player.skin_color,
-            ordinal: ordinal
-                .map(|ordinal| (profile_user.matches_until_rated <= 0).then(|| ordinal)),
-            ordinal_delta: None,
+            dr: ordinal.map(|ordinal| (profile_user.matches_until_rated <= 0).then(|| ordinal)),
+            dr_delta: None,
             user: User::try_from(profile_user)?,
         });
     }

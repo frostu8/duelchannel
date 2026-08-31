@@ -454,10 +454,10 @@ impl TryFrom<ParticipantEntity> for Participant {
 
         Ok(Participant {
             // Only show ordinal if the player is not in provisional
-            ordinal: value
+            dr: value
                 .ordinal
                 .map(|ordinal| (user.matches_until_rated <= 0).then(|| ordinal)),
-            ordinal_delta: value
+            dr_delta: value
                 .ordinal_delta
                 .map(|ordinal_delta| (user.matches_until_rated <= 0).then(|| ordinal_delta)),
             roulette: value
