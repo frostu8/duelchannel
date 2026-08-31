@@ -4,7 +4,7 @@ use std::cmp::{max, min};
 use std::fmt::Debug;
 use std::{any::Any, future::ready};
 
-use derive_more::{Deref, DerefMut};
+use derive_more::{Deref, DerefMut, Display};
 
 use chrono::{DateTime, Utc};
 
@@ -556,7 +556,9 @@ where
             .await
             .map_err(|err| {
                 Error::from(err).with_message(format!("failed to get rating for user {}", user_id))
-            })?;
+            })?
+            .ok_or_else(|| MissingRatingError { user_id })
+            .map_err(Error::new)?;
 
         if let Some(mp) = min_period.as_ref() {
             if rating.period.started_at < mp.started_at {
@@ -729,11 +731,11 @@ pub async fn get_rating<T>(
     time: DateTime<Utc>,
     model: &T,
     conn: &mut SqliteConnection,
-) -> Result<RatingEntity<T::Data>, Error>
+) -> Result<Option<RatingEntity<T::Data>>, Error>
 where
     T: RatingModel,
 {
-    let mut rating = sqlx::query_as::<_, RatingEntity<T::Data>>(
+    let rating = sqlx::query_as::<_, RatingEntity<T::Data>>(
         r#"
         SELECT
             r.*,
@@ -749,8 +751,11 @@ where
     )
     .bind(user_id)
     .bind(time)
-    .fetch_one(&mut *conn)
+    .fetch_optional(&mut *conn)
     .await?;
+    let Some(mut rating) = rating else {
+        return Ok(None);
+    };
 
     // Calculate elapsed time
     let delta = time - rating.period.started_at;
@@ -758,7 +763,7 @@ where
         (delta.as_seconds_f32() / model.period().as_seconds_f32()).clamp(0.0, 1.0);
     assert!(rating.period.period_elapsed >= 0.0f32);
 
-    Ok(rating)
+    Ok(Some(rating))
 }
 
 #[instrument(skip(conn))]
@@ -895,3 +900,12 @@ where
         None => D::deserialize(UnitDeserializer::new()),
     }
 }
+
+/// One of the users does not exist.
+#[derive(Debug, Display)]
+#[display("user {user_id} has no instantiated rating")]
+pub struct MissingRatingError {
+    user_id: i32,
+}
+
+impl std::error::Error for MissingRatingError {}
