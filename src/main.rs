@@ -11,7 +11,7 @@ use clap::{CommandFactory as _, Parser};
 
 use axum::{
     Extension, Router,
-    extract::{MatchedPath, Request},
+    extract::{DefaultBodyLimit, MatchedPath, Request},
     middleware::{Next, from_fn},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
@@ -28,7 +28,7 @@ use duelchannel::{
     entity::user::mmr::{RatingService, Unrated},
     error::Error,
     mmr::{glicko2::Glicko2, openskill::OpenSkill},
-    routes,
+    routes::{self, battle::replay::MAX_REPLAY_SIZE},
 };
 
 use sqlx::{Sqlite, pool::PoolOptions, sqlite::SqliteConnectOptions};
@@ -430,6 +430,7 @@ where
                 // logging of errors so disable that
                 .on_failure(()),
         )
+        .layer(DefaultBodyLimit::max(MAX_REPLAY_SIZE))
         .layer(from_fn(log_app_errors));
 
     let handle = Handle::new();
@@ -490,11 +491,26 @@ async fn security_headers(request: Request, next: Next) -> Response {
 
 // Stolen from: https://github.com/tokio-rs/axum/blob/main/examples/error-handling/src/main.rs
 async fn log_app_errors(request: Request, next: Next) -> Response {
+    let path = request
+        .extensions()
+        .get::<MatchedPath>()
+        .as_ref()
+        .map(|mp| mp.as_str().to_string());
+
     let response = next.run(request).await;
+    let err = response.extensions().get::<Arc<Error>>();
+
     // If the response contains an Error Extension, log it.
-    if let Some(err) = response.extensions().get::<Arc<Error>>() {
-        tracing::error!(?err, "an unexpected error occurred inside a handler");
+    match (err, path) {
+        (Some(err), Some(path)) => {
+            tracing::error!(%path, ?err, "an unexpected error occurred inside a handler");
+        }
+        (Some(err), None) => {
+            tracing::error!(?err, "an unexpected error occurred inside a handler");
+        }
+        (None, _) => (),
     }
+
     response
 }
 

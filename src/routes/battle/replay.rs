@@ -22,7 +22,8 @@ use crate::{
     multipart::Multipart,
 };
 
-const MAX_REPLAY_SIZE: usize = 1024 * 1024 * 4;
+/// The largest replay size that the server will consume.
+pub const MAX_REPLAY_SIZE: usize = 1024 * 1024 * 4;
 
 /// Accepts a replay.
 #[utoipa::path(
