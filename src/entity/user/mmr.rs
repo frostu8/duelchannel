@@ -65,7 +65,7 @@ pub trait RatingService: Send + Sync {
         entries: &[(i32, bool)],
         config: &Config,
         conn: &mut SqliteConnection,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
+    ) -> impl Future<Output = Result<Vec<super::PostUpdateRating>, Error>> + Send;
 
     /// Fetches the quality of a match by its ratings.
     fn quality_1v1(
@@ -128,7 +128,7 @@ where
         user_ids: &[(i32, bool)],
         config: &Config,
         conn: &mut SqliteConnection,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<super::PostUpdateRating>, Error> {
         super::update_post_battle(user_ids, self, config, conn).await
     }
 
@@ -197,8 +197,8 @@ impl RatingService for Unrated {
         _user_ids: &[(i32, bool)],
         _config: &Config,
         _conn: &mut SqliteConnection,
-    ) -> impl Future<Output = Result<(), Error>> + Send {
-        ready(Ok(()))
+    ) -> impl Future<Output = Result<Vec<super::PostUpdateRating>, Error>> + Send {
+        ready(Ok(vec![]))
     }
 
     fn quality_1v1(
@@ -493,17 +493,19 @@ where
 
 /// A result returned by [`update_ratings_at`].
 #[derive(Clone, Debug, Deref, DerefMut)]
-pub struct UpdateRatingResult<T> {
+pub struct PostUpdateRating<T> {
     /// The updated rating.
     #[deref]
     #[deref_mut]
     pub rating: Rating<T>,
+    /// The player's original rating.
+    pub old_rating: Rating<T>,
     /// How many more matches need to be played by the player until they are
     /// rated.
     pub matches_until_rated: u32,
 }
 
-impl<T> UpdateRatingResult<T> {
+impl<T> PostUpdateRating<T> {
     pub fn into_inner(self) -> Rating<T> {
         self.rating
     }
@@ -516,7 +518,7 @@ pub async fn update_ratings<T>(
     user_ids: &[i32],
     model: &T,
     conn: &mut SqliteConnection,
-) -> Result<Vec<UpdateRatingResult<T::Data>>, Error>
+) -> Result<Vec<PostUpdateRating<T::Data>>, Error>
 where
     T: RatingModel,
 {
@@ -537,16 +539,11 @@ pub async fn update_ratings_at<T>(
     model: &T,
     time: DateTime<Utc>,
     conn: &mut SqliteConnection,
-) -> Result<Vec<UpdateRatingResult<T::Data>>, Error>
+) -> Result<Vec<PostUpdateRating<T::Data>>, Error>
 where
     T: RatingModel,
 {
-    // Do nothing if there are no user ids
-    if user_ids.len() == 0 {
-        return Ok(Vec::new());
-    }
-
-    let mut ratings = Vec::with_capacity(user_ids.len());
+    let mut original_ratings = Vec::with_capacity(user_ids.len());
 
     let mut min_period: Option<RatingPeriodEntity> = None;
     for user_id in user_ids.iter().copied() {
@@ -568,14 +565,16 @@ where
             min_period = Some(rating.period.clone());
         }
 
-        ratings.push(rating);
+        original_ratings.push(rating);
     }
 
     let Some(mut period) = min_period else {
         // There are no ratings to process
-        assert!(ratings.len() == 0);
+        assert!(original_ratings.len() == 0);
         return Ok(vec![]);
     };
+
+    let mut ratings = original_ratings.clone();
 
     // We need to fast forward through existing periods, and add any new ones
     let mut ff = sqlx::query_as::<_, RatingPeriodEntity>(
@@ -712,14 +711,11 @@ where
 
     Ok(ratings
         .into_iter()
-        .map(|r| UpdateRatingResult {
-            rating: Rating {
-                user_id: r.user_id,
-                rating: r.rating,
-                deviation: r.deviation,
-                extra: r.extra,
-            },
-            matches_until_rated: r.matches_until_rated as u32,
+        .zip(original_ratings)
+        .map(|(rating, old_rating)| PostUpdateRating {
+            matches_until_rated: rating.matches_until_rated as u32,
+            old_rating: old_rating.into(),
+            rating: rating.into(),
         })
         .collect())
 }

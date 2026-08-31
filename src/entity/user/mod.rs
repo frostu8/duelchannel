@@ -14,7 +14,13 @@ use duelchannel_model::{
 use sea_query::{Asterisk, Expr, ExprTrait as _, Iden, Order, Query, SqliteQueryBuilder};
 use sea_query_sqlx::SqlxBinder as _;
 
-use crate::{config::Config, entity::MissingData, error::Error, mmr::RatingModel, short_id};
+use crate::{
+    config::Config,
+    entity::MissingData,
+    error::Error,
+    mmr::{RatingModel, RatingModelData},
+    short_id,
+};
 
 use sqlx::{FromRow, SqliteConnection};
 
@@ -418,6 +424,43 @@ enum Table {
     Profile,
 }
 
+/// A result returned by [`update_post_battle`].
+///
+/// The type-erased version of [`mmr::update_post_battle`]. Currently, this
+/// does not pack any model-specific data.
+#[derive(Clone, Debug)]
+pub struct PostUpdateRating {
+    /// The id of the user.
+    pub user_id: i32,
+    /// The new ordinal of the user.
+    pub old_ordinal: f32,
+    /// The delta.
+    pub delta: f32,
+}
+
+impl PostUpdateRating {
+    /// The new ordinal of the user.
+    pub fn ordinal(&self) -> f32 {
+        self.old_ordinal + self.delta
+    }
+}
+
+impl<T> From<mmr::PostUpdateRating<T>> for PostUpdateRating
+where
+    T: RatingModelData,
+{
+    fn from(value: mmr::PostUpdateRating<T>) -> Self {
+        let old_ordinal = value.old_rating.ordinal();
+        let ordinal = value.rating.ordinal();
+
+        PostUpdateRating {
+            user_id: value.user_id,
+            old_ordinal,
+            delta: ordinal - old_ordinal,
+        }
+    }
+}
+
 /// Update ratings of all users passed to the function.
 ///
 /// This *does* reassign a player's rank and grant them awards. Should be
@@ -429,7 +472,7 @@ pub async fn update_post_battle<T>(
     model: &T,
     config: &Config,
     conn: &mut SqliteConnection,
-) -> Result<(), Error>
+) -> Result<Vec<PostUpdateRating>, Error>
 where
     T: RatingModel,
 {
@@ -466,7 +509,7 @@ where
     // Grant awards, update rank
     for ((player, rating), (_, no_contest)) in players
         .into_iter()
-        .zip(ratings)
+        .zip(ratings.iter())
         .zip(entries.iter().copied())
     {
         let mut flags = player.flags;
@@ -524,7 +567,7 @@ where
         }
     }
 
-    Ok(())
+    Ok(ratings.into_iter().map(PostUpdateRating::from).collect())
 }
 
 /// A raw entity for profiles.
