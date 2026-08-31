@@ -301,6 +301,23 @@ where
         db: db.clone(),
     };
 
+    // Run rating updates
+    {
+        let mut tx = db.begin().await?;
+        let user_ids = sqlx::query_as::<_, (i32,)>("SELECT id FROM user")
+            .fetch_all(&db)
+            .await?
+            .into_iter()
+            .map(|(id,)| id)
+            .collect::<Vec<_>>();
+
+        model
+            .update_cached_ratings(user_ids.as_slice(), &mut *tx)
+            .await?;
+
+        tx.commit().await?;
+    }
+
     // Build routes
     let mut api_routes = Router::<AppState>::new()
         // .nest(
