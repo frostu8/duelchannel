@@ -583,7 +583,7 @@ where
         WHERE
             inserted_at > $1
             AND id <> $2
-        ORDER BY inserted_at ASC
+        ORDER BY inserted_at DESC
         "#,
     )
     .bind(period.started_at)
