@@ -225,16 +225,16 @@ impl BattleBuilder {
 ///
 /// Used to fetch a list of matches.
 #[derive(Clone, Debug)]
-pub struct BattleQuery {
+pub struct BattleQuery<T = ()> {
     count: u64,
     before: Option<DateTime<Utc>>,
     after: Option<DateTime<Utc>>,
-    status: Option<BattleStatus>,
+    status: Option<T>,
     level_id: Option<String>,
     user_id: Option<String>,
 }
 
-impl Default for BattleQuery {
+impl<T> Default for BattleQuery<T> {
     fn default() -> Self {
         BattleQuery {
             count: 20,
@@ -247,55 +247,82 @@ impl Default for BattleQuery {
     }
 }
 
-impl BattleQuery {
+impl BattleQuery<()> {
     /// Creates a new `BattleQuery`.
-    pub fn new() -> BattleQuery {
-        BattleQuery::default()
+    pub fn new() -> BattleQuery<Option<BattleStatus>> {
+        BattleQuery::<Option<BattleStatus>>::default()
     }
+}
 
+impl<T> BattleQuery<T> {
     /// How many matches the query should return.
-    pub fn count(&mut self, count: u64) -> &mut Self {
-        self.count = count;
-        self
+    pub fn count(self, count: u64) -> BattleQuery<T> {
+        BattleQuery {
+            count: count,
+            ..self
+        }
     }
 
     /// Get matches only inserted before this time.
-    pub fn before(&mut self, before: DateTime<Utc>) -> &mut Self {
-        self.before = Some(before);
-        self
+    pub fn before(self, before: DateTime<Utc>) -> BattleQuery<T> {
+        BattleQuery {
+            before: Some(before),
+            ..self
+        }
     }
 
     /// Get matches only inserted after this time.
-    pub fn after(&mut self, after: DateTime<Utc>) -> &mut Self {
-        self.after = Some(after);
-        self
+    pub fn after(self, after: DateTime<Utc>) -> BattleQuery<T> {
+        BattleQuery {
+            after: Some(after),
+            ..self
+        }
     }
 
     /// Filter by match status.
-    pub fn status(&mut self, status: BattleStatus) -> &mut Self {
-        self.status = Some(status);
-        self
+    pub fn status<U>(self, status: U) -> BattleQuery<U> {
+        BattleQuery {
+            status: Some(status),
+            count: self.count,
+            before: self.before,
+            after: self.after,
+            level_id: self.level_id,
+            user_id: self.user_id,
+        }
     }
 
     /// Filter by the id of the level the match was played on.
-    pub fn level_id(&mut self, level_id: String) -> &mut Self {
-        self.level_id = Some(level_id);
-        self
+    pub fn level_id(self, level_id: String) -> BattleQuery<T> {
+        BattleQuery {
+            level_id: Some(level_id),
+            ..self
+        }
     }
 
     /// Filter by participating user.
-    pub fn user_id(&mut self, user_id: String) -> &mut Self {
-        self.user_id = Some(user_id);
-        self
+    pub fn user_id(self, user_id: String) -> BattleQuery<T> {
+        BattleQuery {
+            user_id: Some(user_id),
+            ..self
+        }
     }
+}
 
+impl<T> BattleQuery<T>
+where
+    T: IntoIterator<Item = BattleStatus>,
+{
     /// Gets the results of the query.
-    pub async fn fetch(&self, conn: &mut SqliteConnection) -> Result<Vec<BattleEntity>, Error> {
+    pub async fn fetch(self, conn: &mut SqliteConnection) -> Result<Vec<BattleEntity>, Error> {
+        let status = self
+            .status
+            .map(|inner| inner.into_iter().map(|status| u8::from(status)));
+
         let mut query = Query::select()
             .column((Table::Battle, Asterisk))
             .from(Table::Battle)
-            .apply_if(self.status, |q, status| {
-                q.and_where(Expr::col((Table::Battle, "status")).eq(u8::from(status)));
+            .apply_if(status, |q, status| {
+                q.and_where(Expr::col((Table::Battle, "status")).is_in(status));
             })
             .apply_if(self.level_id.as_ref(), |q, level_id| {
                 q.and_where(Expr::col((Table::Battle, "level_id")).eq(level_id));

@@ -69,12 +69,9 @@ pub struct ListBattlesFilters {
     #[garde(skip)]
     #[param(value_type = String, format = "date-time")]
     pub after: Option<DateTime<Utc>>,
-    /// Filter matches with this status.
-    /// * `0` Ongoing
-    /// * `1` Concluded
-    /// * `2` Cancelled
+    /// Show ongoing matches.
     #[garde(skip)]
-    pub status: Option<BattleStatus>,
+    pub show_ongoing: bool,
     /// Filter matches played on this level.
     ///
     /// This will silently fail and return no matches if an invalid ID is
@@ -96,7 +93,7 @@ impl Default for ListBattlesFilters {
             count: 50,
             before: None,
             after: None,
-            status: None,
+            show_ongoing: false,
             level: None,
             user: None,
         }
@@ -121,26 +118,31 @@ pub async fn list(
 ) -> Result<Json<Vec<Battle>>, Error> {
     let mut conn = state.db.acquire().await?;
 
-    let mut query = BattleQuery::new();
-    query.count(filters.count as u64);
+    let mut query = BattleQuery::new().count(filters.count as u64);
 
     if let Some(before) = filters.before {
-        query.before(before);
+        query = query.before(before);
     }
     if let Some(after) = filters.after {
-        query.after(after);
-    }
-    if let Some(status) = filters.status {
-        query.status(status);
+        query = query.after(after);
     }
     if let Some(user_id) = filters.user {
-        query.user_id(user_id);
+        query = query.user_id(user_id);
     }
     if let Some(level_id) = filters.level {
-        query.level_id(level_id);
+        query = query.level_id(level_id);
     }
 
-    let rows = query.fetch(&mut *conn).await?;
+    let rows = if filters.show_ongoing {
+        // No restrictions
+        query.fetch(&mut *conn).await?
+    } else {
+        // Default behavior, show only Concluded and Cancelled.
+        query
+            .status([BattleStatus::Concluded, BattleStatus::Cancelled])
+            .fetch(&mut *conn)
+            .await?
+    };
 
     // Preload all battles
     let mut battles = Vec::with_capacity(rows.len());

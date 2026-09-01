@@ -25,6 +25,8 @@ use crate::{
     mmr::{self, Rating, RatingModel},
 };
 
+const TICRATE: i32 = 35;
+
 /// A rating service.
 ///
 /// Unlike [`RatingModel`], this can mean "one or zero models." Thus, the
@@ -782,7 +784,7 @@ where
         // Filter short matches if they were cancelled
         .filter(|matchup| match matchup.status {
             BattleStatus::Concluded => true,
-            BattleStatus::Cancelled => matchup.finish_time > 35 * 30,
+            BattleStatus::Cancelled => matchup.finish_time > TICRATE * 30,
             BattleStatus::Ongoing => false,
         })
         .map(|matchup| Matchup::<T>::try_from(matchup))
