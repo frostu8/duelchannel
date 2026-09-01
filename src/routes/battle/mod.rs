@@ -258,6 +258,7 @@ where
     struct UserSeed {
         pub id: i32,
         pub ordinal: Option<f32>,
+        pub matches_until_rated: i32,
     }
 
     let mut tx = state.db.begin().await?;
@@ -289,7 +290,7 @@ where
 
         let user = sqlx::query_as::<_, UserSeed>(
             r#"
-            SELECT id, ordinal
+            SELECT id, ordinal, matches_until_rated
             FROM user
             WHERE short_id = $1
             "#,
@@ -301,6 +302,7 @@ where
         let Some(UserSeed {
             id: user_id,
             ordinal,
+            matches_until_rated,
         }) = user
         else {
             tx.rollback().await?;
@@ -310,6 +312,9 @@ where
         if let Some(skin) = input_player.skin.as_ref() {
             upsert_skin(skin, &mut *tx).await?;
         }
+
+        // only stamp ordinal if player is not provisional
+        let ordinal = (matches_until_rated <= 0).then(|| ordinal);
 
         // add player to match
         sqlx::query(
@@ -353,7 +358,7 @@ where
             no_contest: false,
             skin: input_player.skin,
             skin_color: input_player.skin_color,
-            dr: ordinal.map(|ordinal| (profile_user.matches_until_rated <= 0).then(|| ordinal)),
+            dr: ordinal,
             dr_delta: None,
             user: User::try_from(profile_user)?,
         });
