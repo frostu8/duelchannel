@@ -15,8 +15,6 @@ use derive_more::{Deref, DerefMut};
 
 use chrono::TimeDelta;
 
-use duelchannel_model::battle::BattleStatus;
-
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::error::Error;
@@ -114,8 +112,6 @@ impl RatingModelData for () {}
 pub struct Matchup<T = ()> {
     /// The opponent of the player.
     pub opponent: Rating<T>,
-    /// The status of the match that the player participated in.
-    pub status: BattleStatus,
     /// The player's finish position.
     pub position: i32,
     /// The player's finish time.

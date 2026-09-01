@@ -45,7 +45,10 @@ use crate::{
             BattleEntity, BattleQuery, analytics::get_analytics, apply_ordinal_deltas,
             build_battle, get_replay_url,
         },
-        user::{get_user_by_public_key, mmr::RatingService},
+        user::{
+            get_user_by_public_key,
+            mmr::{RatingService, TICRATE},
+        },
     },
     error::{Error, ErrorKind},
     validate::Valid,
@@ -425,6 +428,7 @@ where
     };
 
     let battle_id = battle.id;
+    let original_status = battle.status;
 
     // Verify changes
     let is_status_changed = request.status.map(|s| s != battle.status).unwrap_or(false);
@@ -433,11 +437,24 @@ where
     }
 
     let mut set_concluded = None::<DateTime<Utc>>;
+    let mut set_rated = None::<bool>;
 
     // CHECK! We may need to process the end of a match here.
     if is_status_changed {
         // is_status_changed conditional gaurantees this is `Some`
         let new_status = request.status.unwrap();
+
+        let max_finish_time = sqlx::query_scalar::<_, i32>(
+            r#"
+            SELECT MAX(finish_time)
+            FROM participant
+            WHERE match_id = $1
+            "#,
+        )
+        .bind(battle.id)
+        .bind(TICRATE * 30)
+        .fetch_one(&mut *tx)
+        .await?;
 
         tracing::debug!("setting {} match status to {:?}", uuid, new_status);
 
@@ -459,6 +476,15 @@ where
 
         // Update base schema value
         battle.status = new_status;
+
+        let rated = match new_status {
+            BattleStatus::Concluded => true,
+            BattleStatus::Cancelled => max_finish_time > TICRATE * 30,
+            BattleStatus::Ongoing => false,
+        };
+
+        battle.rated = rated;
+        set_rated = Some(rated);
     }
 
     // Serialize paritcipants; fetch only after
@@ -470,7 +496,7 @@ where
     }
 
     // Update match details
-    sqlx::query(
+    let res = sqlx::query(
         r#"
         UPDATE
             battle
@@ -478,9 +504,12 @@ where
             updated_at = $2,
             status = IFNULL($3, status),
             concluded_at = IFNULL($4, concluded_at),
-            margin_score = IFNULL($5, margin_score)
+            margin_score = IFNULL($5, margin_score),
+            rated = IFNULL($6, rated)
         WHERE
             id = $1
+            AND rated = FALSE
+            AND status = $7
         "#,
     )
     .bind(battle.id)
@@ -488,8 +517,14 @@ where
     .bind(request.status.map(|s| u8::from(s)))
     .bind(set_concluded)
     .bind(request.margin_score)
+    .bind(set_rated)
+    .bind(u8::from(original_status))
     .execute(&mut *tx)
     .await?;
+
+    if res.rows_affected() == 0 {
+        return Err(ErrorKind::RatingSerialized(battle.uuid).into());
+    }
 
     if request.status == Some(BattleStatus::Concluded)
         || request.status == Some(BattleStatus::Cancelled)

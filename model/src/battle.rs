@@ -28,6 +28,14 @@ pub struct Battle {
     pub level_name: String,
     /// The level's internal identifier (the map lumpname, e.g. `RR_AUTUMNRING`).
     pub level_id: String,
+    /// Whether the match contributes to player ratings.
+    ///
+    /// A match is rated if it concluded normally, or if it was cancelled
+    /// after at least 30 seconds of play.
+    ///
+    /// Disconnecting from a match after 30 seconds will mean you take full
+    /// penalties for losing the match.
+    pub rated: bool,
     /// The status of the match.
     pub status: BattleStatus,
     /// The margin score of the match.

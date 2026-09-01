@@ -14,8 +14,6 @@ use tokio::io::AsyncWriteExt;
 use crate::config::Config;
 use crate::mmr::{Matchup, Rating, RatingModel};
 
-use duelchannel_model::battle::BattleStatus;
-
 use sqlx::{FromRow, SqlitePool};
 
 /// Options for running an MMR replay.
@@ -239,7 +237,6 @@ where
                 let matchups = matchups.entry(me.user_id).or_default();
                 matchups.push(Matchup {
                     opponent: opp_rating,
-                    status: BattleStatus::Concluded,
                     position: my_pos,
                     finish_time: me.finish_time.unwrap_or_default(),
                     no_contest: me.no_contest,

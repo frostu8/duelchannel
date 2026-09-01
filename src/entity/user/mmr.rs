@@ -8,8 +8,6 @@ use derive_more::{Deref, DerefMut, Display};
 
 use chrono::{DateTime, Utc};
 
-use duelchannel_model::battle::BattleStatus;
-
 use serde::{
     Serialize,
     de::{DeserializeOwned, value::UnitDeserializer},
@@ -25,7 +23,8 @@ use crate::{
     mmr::{self, Rating, RatingModel},
 };
 
-const TICRATE: i32 = 35;
+/// Game tics per second. Finish times are stored in tics.
+pub const TICRATE: i32 = 35;
 
 /// A rating service.
 ///
@@ -331,8 +330,6 @@ where
 struct Matchup<T> {
     #[sqlx(flatten)]
     pub opponent: RatingEntity<T>,
-    #[sqlx(try_from = "u8")]
-    pub status: BattleStatus,
     pub position: i32,
     pub no_contest: bool,
     pub finish_time: i32,
@@ -342,7 +339,6 @@ impl<T> From<Matchup<T>> for mmr::Matchup<T> {
     fn from(value: Matchup<T>) -> Self {
         mmr::Matchup {
             opponent: value.opponent.into(),
-            status: value.status,
             position: value.position,
             finish_time: value.finish_time,
             no_contest: value.no_contest,
@@ -781,12 +777,6 @@ where
         .fetch_all(&mut *conn)
         .await?
         .into_iter()
-        // Filter short matches if they were cancelled
-        .filter(|matchup| match matchup.status {
-            BattleStatus::Concluded => true,
-            BattleStatus::Cancelled => matchup.finish_time > TICRATE * 30,
-            BattleStatus::Ongoing => false,
-        })
         .map(|matchup| Matchup::<T>::try_from(matchup))
         .collect::<Result<Vec<_>, _>>()
         .map_err(Error::new)

@@ -3,7 +3,7 @@
 --   $1: id of user
 --   $2: time from
 --   $3: time to
--- Outputs: opponent rating r.*, b.status, posiiton, mw.finish_time
+-- Outputs: opponent rating r.*, posiiton, mw.finish_time
 
 WITH recent_ratings AS (
     SELECT r.*
@@ -33,6 +33,8 @@ WHERE
     AND op.match_id = b.id
     AND op.user_id  = r.user_id
     AND r.period_id = rp.id
+    -- Only rated matches contribute to ratings
+    AND b.rated = TRUE
     -- Filter out opponents and "me"
     AND me.user_id  = $1
     AND NOT op.user_id = $1
@@ -40,7 +42,7 @@ WHERE
     AND b.concluded_at >= $2
     AND b.concluded_at < $3
 -- Group by battles to count how many we are ahead
-GROUP BY b.id, b.status, b.inserted_at, me.finish_time, me.no_contest, rp.inserted_at
+GROUP BY b.id, b.inserted_at, me.finish_time, me.no_contest, rp.inserted_at
 -- we only want matches where two players participated
 HAVING COUNT(*) = 1
 ORDER BY b.inserted_at ASC

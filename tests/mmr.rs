@@ -62,8 +62,8 @@ async fn insert_user(pool: &SqlitePool, short: &str, name: &str) -> i32 {
 async fn insert_battle(pool: &SqlitePool, winner: i32, loser: i32, at: chrono::DateTime<Utc>) {
     let res = sqlx::query(
         r#"
-        INSERT INTO battle (uuid, level_name, level_id, status, concluded_at, inserted_at, updated_at)
-        VALUES ($1, 'map', 'RR_MAP', 1, $2, $3, $3)
+        INSERT INTO battle (uuid, level_name, level_id, status, concluded_at, inserted_at, updated_at, rated)
+        VALUES ($1, 'map', 'RR_MAP', 1, $2, $3, $3, TRUE)
         "#,
     )
     .bind(uuid::Uuid::new_v4().to_string())

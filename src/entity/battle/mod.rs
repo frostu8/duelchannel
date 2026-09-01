@@ -43,6 +43,7 @@ pub struct BattleEntity {
     pub level_id: String,
     #[sqlx(try_from = "u8")]
     pub status: BattleStatus,
+    pub rated: bool,
     pub margin_score: i32,
     pub replay_hash: Option<String>,
     pub replay_filename: Option<String>,
@@ -97,6 +98,7 @@ impl TryFrom<BattleEntity> for Battle {
                 .map(Participant::try_from)
                 .collect::<Result<Vec<_>, user::NormalizeError>>()?,
             status: value.status,
+            rated: value.rated,
             margin_score: value.margin_score,
             replay_url: None,
             started_at: value.inserted_at,
@@ -175,8 +177,8 @@ impl BattleBuilder {
             // Create the battle
             let res = sqlx::query(
                 r#"
-                INSERT INTO battle (inserted_at, updated_at, server_id, uuid, level_name, level_id, status)
-                VALUES ($1, $1, $2, $3, $4, $5, $6)
+                INSERT INTO battle (inserted_at, updated_at, server_id, uuid, level_name, level_id, status, rated)
+                VALUES ($1, $1, $2, $3, $4, $5, $6, FALSE)
                 "#,
             )
             .bind(timestamp)
@@ -210,6 +212,7 @@ impl BattleBuilder {
             level_name,
             level_id,
             status,
+            rated: false,
             margin_score: 0,
             replay_hash: None,
             replay_filename: None,

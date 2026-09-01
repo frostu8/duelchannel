@@ -2,7 +2,6 @@ import json
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from enum import Enum, unique
 from typing import Self, TypeVar
 
 import dacite
@@ -10,12 +9,6 @@ from dacite import Config
 from openskill.models import BradleyTerryFull, BradleyTerryFullRating
 
 model = BradleyTerryFull()
-
-@unique
-class BattleStatus(Enum):
-    ONGOING = 0
-    CONCLUDED = 1
-    CANCELLED = 2
 
 @dataclass
 class Rating:
@@ -48,7 +41,6 @@ class Matchup:
     """
 
     opponent: Rating
-    status: BattleStatus
     position: int
     no_contest: bool
     finish_time: int
@@ -71,7 +63,7 @@ class ModelConfig:
 T = TypeVar("T")
 
 def from_dict(ty: type[T], data: dict) -> T:
-    config = Config(cast=[BattleStatus], type_hooks={datetime: datetime.fromisoformat})
+    config = Config(type_hooks={datetime: datetime.fromisoformat})
     return dacite.from_dict(ty, data, config)
 
 # Start loop

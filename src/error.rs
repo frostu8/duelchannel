@@ -318,6 +318,10 @@ pub enum ErrorKind {
     /// A resource was not found.
     #[display("Resource not found")]
     NotFound,
+    /// Another client already requested a battle's rating.
+    #[display("battle {_0} was modified by another client")]
+    #[from(ignore)]
+    RatingSerialized(Uuid),
     /// A battle with the given UUID already concluded.
     #[display("Battle {_0} concluded")]
     #[from(ignore)]

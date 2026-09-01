@@ -476,7 +476,6 @@ mod tests {
 
         let matchup = Matchup {
             opponent: p2.clone(),
-            status: BattleStatus::Concluded,
             position: 1,
             finish_time: 3000,
             no_contest: false,
