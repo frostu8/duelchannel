@@ -86,7 +86,7 @@ pub trait RatingService: Send + Sync {
         I: IntoIterator<Item = i32> + Send,
         I::IntoIter: Send;
 
-    /// Dumps the MMR list to a writerr.
+    /// Dumps the MMR list to a writer.
     fn dump<W>(
         &self,
         writer: W,
@@ -805,7 +805,7 @@ where
     let from = now - model.period();
 
     // Write header
-    writer.write(b"ID,Player Name,Total Matches,Win/Loss Rate,MMR,Deviation\n")?;
+    writer.write_all(b"ID,Player Name,Total Matches,Win/Loss Rate,MMR,Deviation\n")?;
 
     let users = sqlx::query_as::<_, (i32, String, String)>(
         r#"
